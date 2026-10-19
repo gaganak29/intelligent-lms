@@ -1,11 +1,19 @@
 import sqlite3
 import os
 import json
-from datetime import datetime
 from werkzeug.security import check_password_hash, generate_password_hash
 from question_generator import generate_additional_questions
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lms.db')
+HIGH_SCHOOL_ALLOWED_SUBJECTS = (
+    'Biology',
+    'Physics',
+    'Math',
+    'Chemistry',
+    'History',
+    'Geography',
+    'English',
+)
 
 def get_db_connection():
     """Establishes and returns a connection to SQLite with row dictionary factory."""
@@ -32,6 +40,8 @@ def init_db():
     student_columns = [row['name'] for row in cursor.execute('PRAGMA table_info(students)').fetchall()]
     if 'password_hash' not in student_columns:
         cursor.execute('ALTER TABLE students ADD COLUMN password_hash TEXT')
+    if 'role' not in student_columns:
+        cursor.execute("ALTER TABLE students ADD COLUMN role TEXT DEFAULT 'student'")
 
     # 2. Questions table
     cursor.execute('''
@@ -134,8 +144,8 @@ def init_db():
     }
     for name, password in default_passwords.items():
         cursor.execute(
-            'UPDATE students SET password_hash = ? WHERE name = ? AND password_hash IS NULL',
-            (generate_password_hash(password), name)
+            'UPDATE students SET password_hash = ?, role = ? WHERE name = ? AND (password_hash IS NULL OR role IS NULL)',
+            (generate_password_hash(password), 'student', name)
         )
 
     conn.commit()
@@ -162,7 +172,7 @@ def get_student_profile(student_id):
     """Returns the student identity record used by the learning modules."""
     conn = get_db_connection()
     row = conn.execute(
-        'SELECT id, name, category, created_at FROM students WHERE id = ?',
+        'SELECT id, name, category, COALESCE(role, "student") as role, created_at FROM students WHERE id = ? AND COALESCE(role, "student") = "student"',
         (student_id,)
     ).fetchone()
     conn.close()
@@ -172,7 +182,7 @@ def authenticate_student(student_id, password):
     """Returns a student profile when the ID and password are valid."""
     conn = get_db_connection()
     row = conn.execute(
-        'SELECT id, name, category, password_hash, created_at FROM students WHERE id = ?',
+        'SELECT id, name, category, COALESCE(role, "student") as role, password_hash, created_at FROM students WHERE id = ? AND COALESCE(role, "student") = "student"',
         (student_id,)
     ).fetchone()
     conn.close()
@@ -187,8 +197,8 @@ def create_student(name, category, password):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
-        'INSERT INTO students (name, category, password_hash) VALUES (?, ?, ?)',
-        (name.strip(), category, generate_password_hash(password))
+        'INSERT INTO students (name, category, password_hash, role) VALUES (?, ?, ?, ?)',
+        (name.strip(), category, generate_password_hash(password), 'student')
     )
     student_id = cursor.lastrowid
     conn.commit()
@@ -200,16 +210,19 @@ def fetch_unique_test_questions(category, count=50, subject=None):
     Selects exactly `count` unique questions for a test session.
     Guarantees:
     - Never duplicates a question within the same test.
-    - Balanced distribution across available subjects.
+    - Balanced distribution across the allowed high-school subjects only.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
 
     if count > 0:
-        cursor.execute('SELECT * FROM questions WHERE category = ?', (category,))
+        if subject and subject != 'All':
+            cursor.execute('SELECT * FROM questions WHERE category = ? AND subject = ?', (category, subject))
+        else:
+            cursor.execute('SELECT * FROM questions WHERE category = ?', (category,))
         existing_questions = [dict(row) for row in cursor.fetchall()]
         if len(existing_questions) < count:
-            additions = generate_additional_questions(category, existing_questions, count)
+            additions = generate_additional_questions(category, existing_questions, count, subject=subject)
             for question in additions:
                 cursor.execute('''
                     INSERT INTO questions (category, subject, topic, question, option_a, option_b,
@@ -220,77 +233,115 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                       question['correct_answer'], question['explanation'], question['difficulty']))
             conn.commit()
 
-    if subject and subject != 'All':
-        cursor.execute('''
-            SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
-                            correct_answer, explanation, difficulty
-            FROM questions
-            WHERE category = ? AND subject = ?
-            ORDER BY RANDOM()
-            LIMIT ?
-        ''', (category, subject, count))
-        questions = [dict(row) for row in cursor.fetchall()]
+    if category == 'highschool':
+        allowed_subjects = HIGH_SCHOOL_ALLOWED_SUBJECTS
+        if subject and subject != 'All':
+            subject_values = (subject,) if subject in allowed_subjects else ()
+        else:
+            subject_values = allowed_subjects
     else:
-        # Fetch available subjects for balanced selection
-        cursor.execute('SELECT DISTINCT subject FROM questions WHERE category = ?', (category,))
-        subjects = [row['subject'] for row in cursor.fetchall()]
+        subject_values = ()
 
-        questions = []
-        seen_ids = set()
+    if category == 'highschool' and subject_values:
+        placeholders = ', '.join('?' for _ in subject_values)
+        if subject and subject != 'All':
+            cursor.execute('''
+                SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                                correct_answer, explanation, difficulty
+                FROM questions
+                WHERE category = ? AND subject = ?
+                ORDER BY RANDOM()
+                LIMIT ?
+            ''', (category, subject, count))
+            questions = [dict(row) for row in cursor.fetchall()]
+        else:
+            cursor.execute(f'''
+                SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                                correct_answer, explanation, difficulty
+                FROM questions
+                WHERE category = ? AND subject IN ({placeholders})
+                ORDER BY RANDOM()
+            ''', (category, *subject_values))
+            all_rows = [dict(row) for row in cursor.fetchall()]
+            questions = []
+            seen_ids = set()
+            for row in all_rows:
+                if row['id'] not in seen_ids and len(questions) < count:
+                    seen_ids.add(row['id'])
+                    questions.append(row)
+    else:
+        if subject and subject != 'All':
+            cursor.execute('''
+                SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                                correct_answer, explanation, difficulty
+                FROM questions
+                WHERE category = ? AND subject = ?
+                ORDER BY RANDOM()
+                LIMIT ?
+            ''', (category, subject, count))
+            questions = [dict(row) for row in cursor.fetchall()]
+        else:
+            cursor.execute('SELECT DISTINCT subject FROM questions WHERE category = ?', (category,))
+            subjects = [row['subject'] for row in cursor.fetchall()]
 
-        if subjects:
-            per_subj = max(1, count // len(subjects))
-            for s in subjects:
-                cursor.execute('''
-                    SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
-                           correct_answer, explanation, difficulty
-                    FROM questions
-                    WHERE category = ? AND subject = ?
-                    ORDER BY RANDOM()
-                    LIMIT ?
-                ''', (category, s, per_subj))
+            questions = []
+            seen_ids = set()
+
+            if subjects:
+                per_subj = max(1, count // len(subjects))
+                for s in subjects:
+                    cursor.execute('''
+                        SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                               correct_answer, explanation, difficulty
+                        FROM questions
+                        WHERE category = ? AND subject = ?
+                        ORDER BY RANDOM()
+                        LIMIT ?
+                    ''', (category, s, per_subj))
+                    for row in cursor.fetchall():
+                        if row['id'] not in seen_ids and len(questions) < count:
+                            seen_ids.add(row['id'])
+                            questions.append(dict(row))
+
+            if len(questions) < count:
+                needed = count - len(questions)
+                if seen_ids:
+                    placeholders = ','.join('?' for _ in seen_ids)
+                    query = f'''
+                        SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                               correct_answer, explanation, difficulty
+                        FROM questions
+                        WHERE category = ? AND id NOT IN ({placeholders})
+                        ORDER BY RANDOM()
+                        LIMIT ?
+                    '''
+                    cursor.execute(query, [category] + list(seen_ids) + [needed])
+                else:
+                    cursor.execute('''
+                        SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                               correct_answer, explanation, difficulty
+                        FROM questions
+                        WHERE category = ?
+                        ORDER BY RANDOM()
+                        LIMIT ?
+                    ''', (category, needed))
+
                 for row in cursor.fetchall():
                     if row['id'] not in seen_ids and len(questions) < count:
                         seen_ids.add(row['id'])
                         questions.append(dict(row))
 
-        # If we still need more to reach exactly `count`, fetch remaining unique questions
-        if len(questions) < count:
-            needed = count - len(questions)
-            if seen_ids:
-                placeholders = ','.join('?' for _ in seen_ids)
-                query = f'''
-                    SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
-                           correct_answer, explanation, difficulty
-                    FROM questions
-                    WHERE category = ? AND id NOT IN ({placeholders})
-                    ORDER BY RANDOM()
-                    LIMIT ?
-                '''
-                cursor.execute(query, [category] + list(seen_ids) + [needed])
-            else:
-                cursor.execute('''
-                    SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
-                           correct_answer, explanation, difficulty
-                    FROM questions
-                    WHERE category = ?
-                    ORDER BY RANDOM()
-                    LIMIT ?
-                ''', (category, needed))
-
-            for row in cursor.fetchall():
-                if row['id'] not in seen_ids and len(questions) < count:
-                    seen_ids.add(row['id'])
-                    questions.append(dict(row))
-
     conn.close()
 
     # Double-check uniqueness constraint
     unique_check = set()
+    question_text_check = set()
     sanitized_questions = []
     for q in questions:
-        if q['id'] not in unique_check:
+        question_text = ' '.join(q['question'].split()).casefold()
+        if q['id'] not in unique_check and question_text not in question_text_check:
             unique_check.add(q['id'])
+            question_text_check.add(question_text)
             sanitized_questions.append(q)
 
     return sanitized_questions

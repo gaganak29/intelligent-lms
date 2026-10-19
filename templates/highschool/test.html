@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% block title %}Subject MCQ Test - High School{% endblock %}
+{% block title %}Advanced Subject Mastery Challenge - High School{% endblock %}
 
 {% block content %}
 <div class="container py-4">
@@ -10,7 +10,7 @@
     <ol class="breadcrumb">
       <li class="breadcrumb-item"><a href="{{ url_for('home') }}" class="text-decoration-none">Dashboard</a></li>
       <li class="breadcrumb-item"><a href="{{ url_for('highschool_dashboard') }}" class="text-decoration-none">High School</a></li>
-      <li class="breadcrumb-item active" aria-current="page">Subject Test</li>
+      <li class="breadcrumb-item active" aria-current="page">Mastery Challenge</li>
     </ol>
   </nav>
 
@@ -19,8 +19,8 @@
     <div class="spinner-border text-success" style="width: 3.5rem; height: 3.5rem;" role="status">
       <span class="visually-hidden">Loading...</span>
     </div>
-    <div class="h5 fw-bold text-dark mt-3">Generating 300 Unique Questions...</div>
-    <p class="text-muted small">Checking database constraints to guarantee zero duplicate questions.</p>
+    <div class="h5 fw-bold text-dark mt-3">Preparing your challenge questions...</div>
+    <p class="text-muted small">Preparing your personalized question set.</p>
   </div>
 
   <!-- Error Alert -->
@@ -67,7 +67,7 @@
               <span class="badge bg-primary-subtle text-primary fw-bold px-3 py-1 rounded-pill" id="qSubject">Subject</span>
               <div class="d-flex align-items-center gap-2">
                 <span class="badge bg-light text-muted border px-2 py-1" id="qDifficulty">Medium</span>
-                <span class="fw-bold text-dark" id="qNumber">Question 1 of 50</span>
+                <span class="fw-bold text-dark" id="qNumber">Question 1</span>
               </div>
             </div>
 
@@ -196,7 +196,7 @@
               <i class="fa-solid fa-chart-line me-1"></i> View Performance Analytics
             </a>
             <a href="{{ url_for('highschool_test') }}" class="btn btn-outline-success btn-lg px-4 rounded-pill fw-semibold">
-              <i class="fa-solid fa-rotate-right me-1"></i> Retake New 50-Q Test
+              <i class="fa-solid fa-rotate-right me-1"></i> Retake Challenge
             </a>
             <a href="{{ url_for('highschool_dashboard') }}" class="btn btn-outline-secondary btn-lg px-4 rounded-pill fw-semibold">
               <i class="fa-solid fa-house me-1"></i> High School Hub
@@ -241,7 +241,7 @@
       category: 'highschool',
       count: 'all',
       studentId: {{ student_id }},
-      testTitle: 'High School Subject MCQ Test'
+      testTitle: 'High School Advanced Subject Challenge'
     });
   });
 </script>

@@ -35,12 +35,59 @@ class TestLMS(unittest.TestCase):
             res = self.client.get(r)
             self.assertEqual(res.status_code, 200, f"Route {r} failed")
 
+    def test_ml_explainability(self):
+        self.login_as(1, 'rahul123')
+        res = self.client.get('/ml-insights')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn(b'Empirical ML Model Evaluation & Explainability', res.data)
+        self.assertIn(b'Confusion Matrix', res.data)
+
+        metrics_res = self.client.get('/api/ml/metrics')
+        self.assertEqual(metrics_res.status_code, 200)
+        metrics = json.loads(metrics_res.data)
+        self.assertIn('feature_importance', metrics)
+        self.assertIn('confusion_matrix', metrics)
+
+    def test_faculty_portal_removed(self):
+        self.login_as(1, 'rahul123')
+        dashboard = self.client.get('/')
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertNotIn(b'Faculty Portal', dashboard.data)
+        self.assertEqual(self.client.get('/teacher/dashboard').status_code, 404)
+        self.assertEqual(self.client.get('/teacher/add-question').status_code, 404)
+
+    def test_highschool_performance_download(self):
+        self.login_as(1, 'rahul123')
+        res = self.client.get('/highschool/performance/download')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.headers['Content-Type'].startswith('text/csv'))
+        self.assertIn('high_school_performance_analysis.csv', res.headers['Content-Disposition'])
+        self.assertIn(b'Summary Metric,Value', res.data)
+        self.assertIn(b'Subject / Topic Breakdown', res.data)
+
+    def test_puc_degree_performance_download(self):
+        self.login_as(2, 'ananya123')
+        res = self.client.get('/puc-degree/performance/download')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.headers['Content-Type'].startswith('text/csv'))
+        self.assertIn('puc_degree_performance_analysis.csv', res.headers['Content-Disposition'])
+        self.assertIn(b'Summary Metric,Value', res.data)
+        self.assertIn(b'Test History', res.data)
+
+    def test_performance_download_requires_login(self):
+        self.client.get('/logout')
+        res = self.client.get('/highschool/performance/download')
+        self.assertEqual(res.status_code, 302)
+
     def test_highschool_50_questions_api(self):
         res = self.client.get('/api/questions?category=highschool&count=50')
         self.assertEqual(res.status_code, 200)
         data = json.loads(res.data)
         self.assertEqual(data['status'], 'success')
         self.assertEqual(len(data['questions']), 50)
+        allowed_subjects = {'Biology', 'Physics', 'Math', 'Chemistry', 'History', 'Geography', 'English'}
+        returned_subjects = {q['subject'] for q in data['questions']}
+        self.assertTrue(returned_subjects.issubset(allowed_subjects), f"Unexpected subjects in high school test: {returned_subjects}")
         # Verify 0 duplicates
         q_ids = [q['id'] for q in data['questions']]
         self.assertEqual(len(set(q_ids)), 50, "Duplicates found in High School test!")

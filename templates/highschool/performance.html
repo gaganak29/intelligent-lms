@@ -24,6 +24,9 @@
       <p class="text-muted mb-0">Autonomous self-assessment tracking test scores, game accuracy, subject proficiency, and ML performance classification.</p>
     </div>
     <div class="d-flex gap-2">
+      <a href="{{ url_for('download_highschool_performance') }}" class="btn btn-outline-primary rounded-pill px-4 fw-bold">
+        <i class="fa-solid fa-download me-1"></i> Download Analysis
+      </a>
       <a href="{{ url_for('highschool_test') }}" class="btn btn-success rounded-pill px-4 fw-bold">
         <i class="fa-solid fa-play me-1"></i> Take New Test
       </a>
@@ -118,7 +121,7 @@
         {% else %}
           <div class="text-center text-muted p-5">
             <i class="fa-solid fa-chart-column fs-2 mb-2 opacity-50"></i>
-            <p class="small mb-0">Complete your first 50-Question Subject Test to view subject mastery breakdown.</p>
+            <p class="small mb-0">Complete your first advanced challenge to view subject mastery breakdown.</p>
           </div>
         {% endif %}
 

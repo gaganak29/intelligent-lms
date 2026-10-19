@@ -1,6 +1,8 @@
+import csv
+import io
 import os
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, make_response
 from database import (
     init_db, get_db_connection, get_or_create_default_student,
     get_student_profile, authenticate_student, create_student, fetch_unique_test_questions,
@@ -8,7 +10,8 @@ from database import (
 )
 from summarizer import textrank_summarize
 from map_generator import generate_visual_map
-from ml_engine import get_student_performance_data
+from ml_engine import get_student_performance_data, get_model_explainability_metrics
+from ai_services import generate_quiz_from_notes, solve_doubt_ai, compare_summarization_study
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'intelligent-lms-secret-key-cse-2026'
@@ -20,7 +23,8 @@ with app.app_context():
 def login_required(view):
     @wraps(view)
     def wrapped_view(*args, **kwargs):
-        if 'student_id' not in session:
+        if 'student_id' not in session or not current_student():
+            session.clear()
             return redirect(url_for('login', next=request.path))
         return view(*args, **kwargs)
     return wrapped_view
@@ -33,10 +37,13 @@ def current_student():
 # -------------------------------------------------------------
 @app.route('/')
 def home():
-    """Shows login first, then the authenticated student's dashboard."""
+    """Shows login first, or routes students to their self-assessment dashboard."""
     if 'student_id' not in session:
         return redirect(url_for('login'))
     student = current_student()
+    if not student:
+        session.clear()
+        return redirect(url_for('login'))
     perf = get_student_performance_data(student['id'], student['category'])
     return render_template(
         'index.html',
@@ -52,6 +59,7 @@ def home():
 def login():
     error = None
     if request.method == 'POST':
+        next_url = request.args.get('next')
         try:
             student_id = int(request.form.get('student_id', '').strip())
         except ValueError:
@@ -60,9 +68,11 @@ def login():
         if student:
             session.clear()
             session['student_id'] = student['id']
-            destination = request.args.get('next') or url_for('home')
+            destination = next_url or url_for('home')
             return redirect(destination)
-        error = 'Invalid Student ID or password.'
+        else:
+            error = 'Invalid Student ID or password.'
+
     return render_template('login.html', error=error)
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -93,8 +103,8 @@ def logout():
 
 @app.route('/about')
 def about():
-    """Project documentation, architecture, genuine IEEE citations, and viva guide."""
-    return render_template('about.html')
+    """Deprecated page redirect to the main dashboard."""
+    return redirect(url_for('home'))
 
 # -------------------------------------------------------------
 # HIGH SCHOOL MODULES
@@ -113,7 +123,7 @@ def highschool_dashboard():
 @app.route('/highschool/test')
 @login_required
 def highschool_test():
-    """50-Question Subject-based MCQ Test."""
+    """Advanced Subject Mastery Challenge."""
     student_id = current_student()['id']
     return render_template('highschool/test.html', student_id=student_id)
 
@@ -147,6 +157,12 @@ def highschool_performance():
     perf = get_student_performance_data(student_id, 'highschool')
     return render_template('highschool/performance.html', perf=perf)
 
+@app.route('/highschool/performance/download')
+@login_required
+def download_highschool_performance():
+    """Downloads the authenticated high school student's performance analysis as CSV."""
+    return download_performance_report('highschool', 'high_school')
+
 # -------------------------------------------------------------
 # PUC & DEGREE MODULES
 # -------------------------------------------------------------
@@ -164,9 +180,13 @@ def puc_degree_dashboard():
 @app.route('/puc-degree/test')
 @login_required
 def puc_degree_test():
-    """100-Question Technical & Logical Assessment."""
+    """100-question CET, JEE, or DSA Aptitude assessment."""
     student_id = current_student()['id']
-    return render_template('puc_degree/test.html', student_id=student_id)
+    subject = request.args.get('subject', 'CET')
+    allowed_subjects = {'CET', 'JEE', 'DSA Aptitude'}
+    if subject not in allowed_subjects:
+        return redirect(url_for('puc_degree_dashboard'))
+    return render_template('puc_degree/test.html', student_id=student_id, assessment_subject=subject)
 
 @app.route('/puc-degree/performance')
 @login_required
@@ -178,6 +198,75 @@ def puc_degree_performance():
     student_id = student['id']
     perf = get_student_performance_data(student_id, 'puc_degree')
     return render_template('puc_degree/performance.html', perf=perf)
+
+@app.route('/puc-degree/performance/download')
+@login_required
+def download_puc_degree_performance():
+    """Downloads the authenticated PUC/Degree student's performance analysis as CSV."""
+    return download_performance_report('puc_degree', 'puc_degree')
+
+def download_performance_report(category, filename_prefix):
+    """Builds a portable CSV report from the same data shown on the dashboard."""
+    student = current_student()
+    if student['category'] != category:
+        return redirect(url_for('highschool_performance' if category == 'puc_degree' else 'puc_degree_performance'))
+
+    perf = get_student_performance_data(student['id'], category)
+    report = io.StringIO(newline='')
+    writer = csv.writer(report)
+    writer.writerow(['Performance Analysis Report'])
+    writer.writerow(['Student ID', student['id']])
+    writer.writerow(['Student Name', student['name']])
+    writer.writerow(['Category', 'High School' if category == 'highschool' else 'PUC & Degree'])
+    writer.writerow([])
+
+    writer.writerow(['Summary Metric', 'Value'])
+    summary = [
+        ('Tests Attempted', perf['total_tests']),
+        ('Questions Evaluated', perf['total_questions']),
+        ('Correct Answers', perf['total_correct']),
+        ('Incorrect Answers', perf['total_incorrect']),
+        ('Unattempted Questions', perf['total_unattempted']),
+        ('Average Score (%)', perf['average_score']),
+        ('Highest Score (%)', perf['highest_score']),
+        ('Latest Score (%)', perf['latest_score']),
+        ('Overall Percentage (%)', perf['overall_percentage']),
+        ('Performance Tier', perf['ml_predicted_level']),
+        ('Mastery Cluster', perf['ml_cluster']),
+        ('Games Recorded', perf['game_stats']['total_games']),
+        ('Games Average Accuracy (%)', perf['game_stats']['avg_accuracy']),
+    ]
+    for label, value in summary:
+        writer.writerow([label, value])
+
+    writer.writerow([])
+    writer.writerow(['Subject / Topic Breakdown'])
+    writer.writerow(['Subject', 'Correct', 'Total Asked', 'Percentage'])
+    for subject in perf['subject_breakdown']:
+        writer.writerow([
+            subject['subject'],
+            subject['correct'],
+            subject['total_asked'],
+            f"{subject['percentage']}%"
+        ])
+
+    writer.writerow([])
+    writer.writerow(['Test History'])
+    writer.writerow(['Test', 'Score (%)'])
+    for label, score in zip(perf['history_labels'], perf['history_scores']):
+        writer.writerow([label, score])
+
+    writer.writerow([])
+    writer.writerow(['Recommendations'])
+    writer.writerow(['Recommendation', perf['recommendation']])
+    writer.writerow(['ML Decision Rule', perf['ml_decision_rule']])
+    writer.writerow(['Strong Areas', ', '.join(perf['strong_subjects']) or 'None recorded'])
+    writer.writerow(['Areas Needing Improvement', ', '.join(perf['weak_subjects']) or 'None recorded'])
+
+    response = make_response('\ufeff' + report.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = f'attachment; filename={filename_prefix}_performance_analysis.csv'
+    return response
 
 # -------------------------------------------------------------
 # REST API ENDPOINTS
@@ -191,7 +280,7 @@ def api_get_questions():
     category = request.args.get('category', 'highschool')
     requested_count = request.args.get('count')
     if requested_count in (None, '', 'all'):
-        count = 300
+        count = 100
     else:
         count = max(1, int(requested_count))
     subject = request.args.get('subject', None)
@@ -304,6 +393,69 @@ def api_get_student(student_id):
     if not student:
         return jsonify({'status': 'error', 'message': 'Student not found'}), 404
     return jsonify({'status': 'success', 'student': student})
+
+# -------------------------------------------------------------
+# GENERATIVE AI & NLP SERVICES
+# -------------------------------------------------------------
+@app.route('/ai/quiz-studio')
+@login_required
+def ai_quiz_studio():
+    """Interactive AI Notes-to-Quiz Generator and ROUGE Summarization Studio."""
+    return render_template('ai_quiz_gen.html')
+
+@app.route('/api/ai/generate-quiz', methods=['POST'])
+def api_ai_generate_quiz():
+    """Converts user lecture notes or paragraphs into structured MCQs."""
+    data = request.get_json() or {}
+    notes = data.get('notes_text', '').strip()
+    if not notes:
+        return jsonify({"status": "error", "message": "Please provide notes or textbook excerpt"}), 400
+    subject = data.get('subject', 'General')
+    num_q = int(data.get('num_questions', 5))
+    difficulty = data.get('difficulty', 'Medium')
+
+    res = generate_quiz_from_notes(notes, num_questions=num_q, subject=subject, difficulty=difficulty)
+    return jsonify(res)
+
+@app.route('/api/ai/solve-doubt', methods=['POST'])
+def api_ai_solve_doubt():
+    """Contextual academic doubt solver explaining why an option is right/wrong."""
+    data = request.get_json() or {}
+    q_text = data.get('question', '').strip()
+    options = data.get('options', {})
+    correct_opt = data.get('correct_option', '')
+    selected_opt = data.get('selected_option', '')
+    student_query = data.get('student_query', '')
+
+    res = solve_doubt_ai(q_text, options, correct_opt, selected_opt, student_query)
+    return jsonify(res)
+
+@app.route('/api/ai/compare-summary', methods=['POST'])
+def api_ai_compare_summary():
+    """Runs TextRank vs Abstractive summarization and computes ROUGE metrics."""
+    data = request.get_json() or {}
+    text = data.get('text', '').strip()
+    if not text:
+        return jsonify({"status": "error", "message": "Please provide text for summarization study"}), 400
+
+    res = compare_summarization_study(text)
+    return jsonify(res)
+
+# -------------------------------------------------------------
+# MACHINE LEARNING EXPLAINABILITY
+# -------------------------------------------------------------
+@app.route('/ml-insights')
+@login_required
+def ml_insights():
+    """Interactive visual dashboard of Confusion Matrix, Feature Importance, and Model Comparison."""
+    metrics = get_model_explainability_metrics()
+    return render_template('ml_insights.html', metrics=metrics)
+
+@app.route('/api/ml/metrics')
+def api_ml_metrics():
+    """JSON API exposing multi-model evaluation metrics for academic verification."""
+    metrics = get_model_explainability_metrics()
+    return jsonify(metrics)
 
 if __name__ == '__main__':
     print("Starting AI-Powered Intelligent LMS server on http://127.0.0.1:5000 ...")

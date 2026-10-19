@@ -94,18 +94,168 @@ function checkBioAnswer(selectedId, correctId, btnEl) {
 }
 
 // -------------------------------------------------------------
-// BIOLOGY IMAGE PAIR MATCHING
+// BIOLOGY IMAGE PAIR MATCHING (MBBS MEDICAL SPECIMENS)
 // -------------------------------------------------------------
-const BIOLOGY_IMAGE_PAIRS = [
-  { id: 'heart', image: '❤️', label: 'Heart' },
-  { id: 'brain', image: '🧠', label: 'Brain' },
-  { id: 'lungs', image: '🫁', label: 'Lungs' },
-  { id: 'bone', image: '🦴', label: 'Bone' },
-  { id: 'cell', image: '🔬', label: 'Cell' },
-  { id: 'dna', image: '🧬', label: 'DNA' }
-];
+const MBBS_SPECIMENS_DATABASE = {
+  heart: {
+    id: 'heart',
+    image: '/static/images/mbbs/heart.svg',
+    label: 'Heart: 4-Chamber Internal Anatomy & Conduction',
+    shortLabel: 'Heart (4-Chamber)',
+    discipline: 'Cardiovascular Anatomy',
+    mag: 'Gross Coronal Section',
+    structures: 'Left Ventricular Myocardium, Interventricular Septum, Tricuspid & Mitral Valves, Aorta, SA & AV Nodes',
+    clinicalNote: 'Muscular interventricular septum separates systemic LV from pulmonary RV. SA node (Keith-Flack) coordinates atrial syncytial depolarization.'
+  },
+  brain: {
+    id: 'brain',
+    image: '/static/images/mbbs/brain.svg',
+    label: 'Brain: Cerebral Cortex & Brainstem Topography',
+    shortLabel: 'Brain (Cerebral Cortex)',
+    discipline: 'Neuroanatomy',
+    mag: 'Medial Sagittal Hemisection',
+    structures: 'Frontal/Parietal/Occipital/Temporal Lobes, Central Sulcus, Corpus Callosum, Thalamus, Pons, Cerebellar Arbor Vitae',
+    clinicalNote: 'Central sulcus separates Brodmann Area 4 (precentral primary motor) from Brodmann 3,1,2 (postcentral primary somatosensory cortex).'
+  },
+  lungs: {
+    id: 'lungs',
+    image: '/static/images/mbbs/lungs.svg',
+    label: 'Lungs & Alveolar Gas Exchange Barrier',
+    shortLabel: 'Lungs & Alveoli',
+    discipline: 'Pulmonary Histology',
+    mag: 'Bronchial Tree + Alveolar High-Power (400x)',
+    structures: 'Trachea, Carina, Right (3 lobes) / Left (2 lobes), Type I & II Pneumocytes, Capillary diffusion barrier',
+    clinicalNote: 'Type II pneumocytes produce surfactant (dipalmitoylphosphatidylcholine - DPPC), reducing alveolar surface tension and preventing atelectasis.'
+  },
+  bone: {
+    id: 'bone',
+    image: '/static/images/mbbs/bone.svg',
+    label: 'Bone: Haversian System (Osteon)',
+    shortLabel: 'Bone (Osteon System)',
+    discipline: 'Osteology & Histology',
+    mag: 'Ground Bone Section (400x)',
+    structures: 'Central Haversian Canal (neurovascular bundle), Concentric Lamellae, Osteocytes in Lacunae, Radiating Canaliculi',
+    clinicalNote: 'Volkmann canals connect adjacent Haversian systems. Bone remodeling involves osteoclast resorption in Howship lacunae followed by osteoblast osteoid deposition.'
+  },
+  cell: {
+    id: 'cell',
+    image: '/static/images/mbbs/cell.svg',
+    label: 'Cell Ultrastructure & Organelles',
+    shortLabel: 'Cell (TEM Organelles)',
+    discipline: 'Medical Cytology & Cell Biology',
+    mag: 'Transmission Electron Microscopy (TEM)',
+    structures: 'Double-membrane Nucleus with Pores, Nucleolus, Rough ER with Ribosomes, Smooth ER, Golgi Cisternae, Mitochondria Cristae, Lysosomes',
+    clinicalNote: 'Rough ER synthesizes secretory proteins; Smooth ER handles steroidogenesis and hepatic cytochrome P450 drug detoxification; Mitochondria drive ATP oxidative phosphorylation.'
+  },
+  dna: {
+    id: 'dna',
+    image: '/static/images/mbbs/dna.svg',
+    label: 'B-DNA Double Helix & Molecular Genetics',
+    shortLabel: 'DNA Double Helix',
+    discipline: 'Medical Biochemistry',
+    mag: 'Watson-Crick B-DNA Model (34 Å Pitch)',
+    structures: 'Antiparallel Deoxyribose Backbone, Major Groove (22 Å), Minor Groove (12 Å), A=T (2 H-bonds), G≡C (3 H-bonds), Histone Octamer',
+    clinicalNote: 'Topoisomerase inhibitors (e.g. fluoroquinolones, etoposide) cause lethal DNA double-strand breaks during replication and transcription.'
+  },
+  renal_glomerulus: {
+    id: 'renal_glomerulus',
+    image: '/static/images/mbbs/renal_glomerulus.svg',
+    label: 'Renal Glomerulus & Podocyte Barrier',
+    shortLabel: 'Renal Glomerulus',
+    discipline: 'Renal Histology (H&E)',
+    mag: 'Light Microscopy (H&E Stain 400x)',
+    structures: 'Bowman\'s Capsule, Fenestrated Capillary Loops, Podocyte Pedicels, Mesangium, Macula Densa',
+    clinicalNote: 'Podocyte effacement causes Minimal Change Nephrotic Syndrome with massive proteinuria. Mesangial expansion and Kimmelstiel-Wilson nodules characterize diabetic nephropathy.'
+  },
+  purkinje_cells: {
+    id: 'purkinje_cells',
+    image: '/static/images/mbbs/purkinje_cells.svg',
+    label: 'Cerebellar Purkinje Neurons & Cortical Layers',
+    shortLabel: 'Purkinje Neurons',
+    discipline: 'Neurohistology',
+    mag: 'Cerebellar Cortex Folium (200x)',
+    structures: 'Molecular Layer, Flask-shaped Purkinje Cell Somas, Dendritic Fan Arborization, Granule Cell Layer, Axons',
+    clinicalNote: 'Purkinje cells represent the sole inhibitory (GABAergic) output from the cerebellar cortex, projecting to the deep cerebellar nuclei (Dentate, Emboliform, Globose, Fastigial).'
+  },
+  hepatic_triad: {
+    id: 'hepatic_triad',
+    image: '/static/images/mbbs/hepatic_triad.svg',
+    label: 'Hepatic Lobule & Portal Triad',
+    shortLabel: 'Hepatic Portal Triad',
+    discipline: 'Gastrointestinal Histology',
+    mag: 'Liver Parenchyma (H&E 200x)',
+    structures: 'Portal Venule Branch, Hepatic Arteriole Branch, Interlobular Bile Ductule, Hepatocyte Cords, Sinusoids, Central Vein',
+    clinicalNote: 'Blood flows from portal triad inward to central vein; bile flows outward to bile ductule. Zone 3 (centrilobular) is most vulnerable to ischemia and toxic damage.'
+  },
+  cardiac_intercalated_discs: {
+    id: 'cardiac_intercalated_discs',
+    image: '/static/images/mbbs/cardiac_intercalated_discs.svg',
+    label: 'Cardiac Muscle & Intercalated Discs',
+    shortLabel: 'Cardiac Intercalated Discs',
+    discipline: 'Cardiovascular Histology',
+    mag: 'Striated Cardiomyocytes (400x)',
+    structures: 'Branching Cardiomyocytes, Central Vesicular Nuclei, Cross-Striations, Step-like Intercalated Discs, Gap Junctions',
+    clinicalNote: 'Intercalated discs contain Fascia Adherens (anchor actin), Desmosomes (prevent separation during contraction), and Gap Junctions (low electrical resistance for syncytium).'
+  },
+  circle_of_willis: {
+    id: 'circle_of_willis',
+    image: '/static/images/mbbs/circle_of_willis.svg',
+    label: 'Circle of Willis Cerebral Arterial Circle',
+    shortLabel: 'Circle of Willis',
+    discipline: 'Neurovascular Anatomy',
+    mag: 'Base of Brain Angiography',
+    structures: 'Anterior Communicating (ACom), Anterior Cerebral (ACA), Internal Carotid (ICA), Posterior Communicating (PCom), Posterior Cerebral (PCA), Basilar Artery',
+    clinicalNote: 'ACom junction is the most frequent site of congenital saccular (berry) aneurysms; rupture causes sudden severe thunderclap headache (subarachnoid hemorrhage).'
+  },
+  neutrophil_granulocyte: {
+    id: 'neutrophil_granulocyte',
+    image: '/static/images/mbbs/neutrophil_granulocyte.svg',
+    label: 'Neutrophil Granulocyte (PMN Blood Film)',
+    shortLabel: 'Neutrophil PMN',
+    discipline: 'Hematology & Pathology',
+    mag: 'Leishman Stain (1000x Oil Immersion)',
+    structures: '3-5 Lobed Connected Nucleus, Fine Lilac Specific Granules, Barr Body / Drumstick, Surrounding Biconcave Normocytes & Platelets',
+    clinicalNote: 'Neutrophilia with toxic granulation and band forms indicates acute bacterial infection. Hypersegmented neutrophils (>5 lobes) are diagnostic of Vitamin B12/Folate deficiency.'
+  }
+};
+
+const MBBS_DECKS = {
+  core: ['brain', 'cell', 'dna', 'lungs', 'heart', 'bone'],
+  histology: ['renal_glomerulus', 'purkinje_cells', 'hepatic_triad', 'cardiac_intercalated_discs', 'circle_of_willis', 'neutrophil_granulocyte'],
+  comprehensive: ['brain', 'cell', 'dna', 'lungs', 'heart', 'bone', 'renal_glomerulus', 'purkinje_cells', 'hepatic_triad', 'cardiac_intercalated_discs', 'circle_of_willis', 'neutrophil_granulocyte']
+};
+
+let currentMbbsDeck = 'core';
+let BIOLOGY_IMAGE_PAIRS = MBBS_DECKS.core.map(id => MBBS_SPECIMENS_DATABASE[id]);
 
 let bioMatchState = { cards: [], first: null, locked: false, matches: 0, attempts: 0 };
+
+function setMbbsDeck(deckKey) {
+  if (!MBBS_DECKS[deckKey]) return;
+  currentMbbsDeck = deckKey;
+
+  const btnGroup = document.getElementById('mbbsDeckSelector');
+  if (btnGroup) {
+    btnGroup.querySelectorAll('button').forEach(btn => {
+      btn.classList.remove('btn-danger', 'active');
+      btn.classList.add('btn-outline-danger');
+    });
+    const clickedBtn = btnGroup.querySelector(`button[onclick*="'${deckKey}'"]`);
+    if (clickedBtn) {
+      clickedBtn.classList.remove('btn-outline-danger');
+      clickedBtn.classList.add('btn-danger', 'active');
+    }
+  }
+
+  if (deckKey === 'comprehensive') {
+    const shuffled = [...MBBS_DECKS.comprehensive].sort(() => Math.random() - 0.5).slice(0, 8);
+    BIOLOGY_IMAGE_PAIRS = shuffled.map(id => MBBS_SPECIMENS_DATABASE[id]);
+  } else {
+    BIOLOGY_IMAGE_PAIRS = MBBS_DECKS[deckKey].map(id => MBBS_SPECIMENS_DATABASE[id]);
+  }
+
+  initBiologyMatchGame();
+}
 
 function initBiologyMatchGame() {
   const board = document.getElementById('bioMatchBoard');
@@ -119,9 +269,20 @@ function initBiologyMatchGame() {
   document.getElementById('bioMatchFeedback').innerHTML = '';
   board.innerHTML = cards.map(card => `
     <div class="col">
-      <button class="bio-match-card btn btn-outline-danger w-100 p-2" data-card-id="${card.cardId}" onclick="selectBiologyMatchCard('${card.cardId}')" aria-label="Hidden biology card">
-        <span class="bio-match-front d-flex flex-column align-items-center justify-content-center rounded-3 border bg-white" style="min-height: 105px; font-size: 2.5rem;">?</span>
-        <span class="bio-match-face d-none flex-column align-items-center justify-content-center rounded-3 border bg-danger-subtle" style="min-height: 105px; font-size: 2.5rem;">${card.image}<small class="d-block fs-6 fw-semibold text-dark">${card.label}</small></span>
+      <button class="bio-match-card btn btn-outline-danger w-100 p-2 shadow-sm rounded-4 position-relative" data-card-id="${card.cardId}" onclick="selectBiologyMatchCard('${card.cardId}')" aria-label="Hidden medical card" style="transition: all 0.25s ease; min-height: 185px;">
+        <span class="bio-match-front d-flex flex-column align-items-center justify-content-center rounded-3 bg-white border border-danger-subtle p-3" style="min-height: 165px;">
+          <div class="stat-icon bg-danger-subtle text-danger mx-auto mb-2" style="width: 44px; height: 44px; border-radius: 50%;">
+            <i class="fa-solid fa-microscope fs-4"></i>
+          </div>
+          <span class="badge bg-danger-subtle text-danger border border-danger-subtle rounded-pill px-2 py-0 mb-1" style="font-size: 0.65rem;">MBBS SPECIMEN</span>
+          <small class="text-muted fw-bold" style="font-size: 0.72rem;">TAP TO FLIP</small>
+        </span>
+        <span class="bio-match-face d-none flex-column align-items-center justify-content-center rounded-3 bg-white border border-danger p-2 shadow-sm" style="min-height: 165px;">
+          <span class="badge bg-danger text-white rounded-pill px-2 py-0 mb-1 text-truncate" style="font-size: 0.62rem; max-width: 100%;">${card.discipline || 'MBBS Medical'}</span>
+          <img src="${card.image}" alt="${card.label}" class="img-fluid rounded-3 border mb-1" style="width: 100%; height: 95px; object-fit: contain; background: #fafafa; padding: 2px;" />
+          <span class="fw-bold text-dark text-truncate d-block text-center" style="font-size: 0.78rem; width: 100%;" title="${card.label}">${card.shortLabel || card.label}</span>
+          <small class="text-muted text-truncate d-block" style="font-size: 0.65rem;">${card.mag || 'Medical Visual'}</small>
+        </span>
       </button>
     </div>
   `).join('');
@@ -150,16 +311,34 @@ function selectBiologyMatchCard(cardId) {
     bioMatchState.matches += 1;
     firstButton.disabled = true;
     button.disabled = true;
+    firstButton.classList.add('border-success', 'bg-success-subtle');
+    button.classList.add('border-success', 'bg-success-subtle');
     document.getElementById('bioMatchScore').textContent = bioMatchState.matches;
-    feedback.innerHTML = `<div class="alert alert-success py-2">Correct match: ${card.label}.</div>`;
+
+    feedback.innerHTML = `
+      <div class="alert alert-success border-success-subtle shadow-sm py-2 px-3 mt-2 d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-2">
+        <div>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <i class="fa-solid fa-circle-check text-success fs-5"></i>
+            <strong>Correct Match:</strong> <span class="fw-bold text-dark">${card.label}</span>
+            <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill">${card.discipline}</span>
+          </div>
+          <div class="small text-muted mt-1"><i class="fa-solid fa-stethoscope text-danger me-1"></i><strong>Clinical Pearl:</strong> ${card.clinicalNote}</div>
+        </div>
+        <button class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-bold text-nowrap mt-1 mt-sm-0" onclick="openMbbsInspectModal('${card.id}')">
+          <i class="fa-solid fa-magnifying-glass-plus me-1"></i> Inspect Specimen
+        </button>
+      </div>
+    `;
+
     bioMatchState.first = null;
     bioMatchState.locked = false;
     if (bioMatchState.matches === BIOLOGY_IMAGE_PAIRS.length) {
       finishGame('Biology Image Pair Matching', 'Biology', bioMatchState.matches, BIOLOGY_IMAGE_PAIRS.length);
-      feedback.innerHTML = `<div class="alert alert-success py-2 fw-bold">All biology images matched in ${bioMatchState.attempts} attempts!</div>`;
+      feedback.innerHTML += `<div class="alert alert-success py-2 fw-bold mt-2"><i class="fa-solid fa-trophy text-warning me-1"></i> Outstanding! All MBBS medical specimens matched in ${bioMatchState.attempts} attempts!</div>`;
     }
   } else {
-    feedback.innerHTML = '<div class="alert alert-warning py-2">Not a match. Try another pair.</div>';
+    feedback.innerHTML = '<div class="alert alert-warning py-2 shadow-sm"><i class="fa-solid fa-circle-exclamation me-1"></i> Different medical specimens. Review the features and try another pair.</div>';
     setTimeout(() => {
       firstButton.querySelector('.bio-match-front').classList.remove('d-none');
       firstButton.querySelector('.bio-match-face').classList.add('d-none');
@@ -167,7 +346,39 @@ function selectBiologyMatchCard(cardId) {
       button.querySelector('.bio-match-face').classList.add('d-none');
       bioMatchState.first = null;
       bioMatchState.locked = false;
-    }, 700);
+    }, 850);
+  }
+}
+
+function openMbbsInspectModal(specimenId) {
+  const item = MBBS_SPECIMENS_DATABASE[specimenId];
+  if (!item) return;
+
+  const modalEl = document.getElementById('mbbsSpecimenModal');
+  if (!modalEl) return;
+
+  const titleEl = document.getElementById('mbbsModalTitle');
+  const imgEl = document.getElementById('mbbsModalImage');
+  const magEl = document.getElementById('mbbsModalMag');
+  const discEl = document.getElementById('mbbsModalDiscipline');
+  const headingEl = document.getElementById('mbbsModalHeading');
+  const noteEl = document.getElementById('mbbsModalClinicalNote');
+  const structEl = document.getElementById('mbbsModalStructures');
+
+  if (titleEl) titleEl.textContent = item.label;
+  if (imgEl) {
+    imgEl.src = item.image;
+    imgEl.alt = item.label;
+  }
+  if (magEl) magEl.textContent = item.mag || 'Medical Visual Specimen';
+  if (discEl) discEl.textContent = item.discipline || 'MBBS Curriculum';
+  if (headingEl) headingEl.textContent = item.shortLabel || item.label;
+  if (noteEl) noteEl.textContent = item.clinicalNote || 'Clinical correlation details.';
+  if (structEl) structEl.textContent = item.structures || 'Key medical anatomical and histological landmarks.';
+
+  if (window.bootstrap && bootstrap.Modal) {
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
   }
 }
 

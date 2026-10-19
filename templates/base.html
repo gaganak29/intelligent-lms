@@ -61,7 +61,7 @@
             <ul class="dropdown-menu shadow-lg border-0 rounded-4">
               <li><a class="dropdown-item py-2" href="{{ url_for('highschool_dashboard') }}"><i class="fa-solid fa-compass me-2 text-primary"></i>High School Hub</a></li>
               <li><hr class="dropdown-divider"></li>
-              <li><a class="dropdown-item py-2" href="{{ url_for('highschool_test') }}"><i class="fa-solid fa-list-check me-2 text-success"></i>50-Q Subject MCQ Test</a></li>
+              <li><a class="dropdown-item py-2" href="{{ url_for('highschool_test') }}"><i class="fa-solid fa-list-check me-2 text-success"></i>Advanced Subject Mastery Challenge</a></li>
               <li><a class="dropdown-item py-2" href="{{ url_for('highschool_games') }}"><i class="fa-solid fa-gamepad me-2 text-warning"></i>Educational & IQ Games</a></li>
               <li><a class="dropdown-item py-2" href="{{ url_for('highschool_map_method') }}"><i class="fa-solid fa-diagram-project me-2 text-info"></i>Map Method (Theory to Visual)</a></li>
               <li><a class="dropdown-item py-2" href="{{ url_for('highschool_newspaper') }}"><i class="fa-solid fa-newspaper me-2 text-danger"></i>Newspaper Summarizer</a></li>
@@ -75,18 +75,20 @@
               <i class="fa-solid fa-laptop-code me-1 text-info"></i> PUC & Degree
             </a>
             <ul class="dropdown-menu shadow-lg border-0 rounded-4">
-              <li><a class="dropdown-item py-2" href="{{ url_for('puc_degree_dashboard') }}"><i class="fa-solid fa-compass me-2 text-primary"></i>Technical Assessment Hub</a></li>
+              <li><a class="dropdown-item py-2" href="{{ url_for('puc_degree_dashboard') }}"><i class="fa-solid fa-compass me-2 text-primary"></i>PUC Degree Hub</a></li>
               <li><hr class="dropdown-divider"></li>
-              <li><a class="dropdown-item py-2" href="{{ url_for('puc_degree_test') }}"><i class="fa-solid fa-microchip me-2 text-primary"></i>100-Q Technical Assessment</a></li>
+              <li><a class="dropdown-item py-2" href="{{ url_for('puc_degree_dashboard') }}"><i class="fa-solid fa-layer-group me-2 text-primary"></i>CET / JEE / DSA Aptitude Tests</a></li>
               <li><a class="dropdown-item py-2" href="{{ url_for('puc_degree_performance') }}"><i class="fa-solid fa-chart-pie me-2 text-success"></i>Technical Performance Analytics</a></li>
             </ul>
           </li>
 
+          <!-- Academic AI Hub -->
           <li class="nav-item">
-            <a class="nav-link text-white-50 px-3" href="{{ url_for('about') }}">
-              <i class="fa-solid fa-book-open-reader me-1 text-warning"></i> Viva & Documentation
+            <a class="nav-link text-white-50 px-3 hover-white" href="{{ url_for('ai_quiz_studio') }}">
+              <i class="fa-solid fa-wand-magic-sparkles me-1 text-warning"></i> Academic AI Hub
             </a>
           </li>
+
         </ul>
 
         <div class="d-flex align-items-center gap-3">

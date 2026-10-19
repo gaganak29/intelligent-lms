@@ -12,9 +12,10 @@
 class TestRunner {
   constructor(config) {
     this.category = config.category || 'highschool';
+    this.subject = config.subject || null;
     this.targetCount = config.count || 'all';
     this.studentId = config.studentId || 1;
-    this.testTitle = config.testTitle || (this.category === 'highschool' ? 'High School 50-Q Assessment' : 'PUC & Degree 100-Q Technical Assessment');
+    this.testTitle = config.testTitle || (this.category === 'highschool' ? 'High School Advanced Subject Challenge' : 'PUC & Degree Technical Assessment');
 
     this.questions = [];
     this.currentIndex = 0;
@@ -28,7 +29,8 @@ class TestRunner {
   async init() {
     this.renderLoading(true);
     try {
-      const response = await fetch(`/api/questions?category=${this.category}&count=${this.targetCount}`);
+      const subjectParam = this.subject ? `&subject=${encodeURIComponent(this.subject)}` : '';
+      const response = await fetch(`/api/questions?category=${this.category}&count=${this.targetCount}${subjectParam}`);
       const data = await response.json();
 
       if (data.status === 'success' && data.questions && data.questions.length > 0) {
