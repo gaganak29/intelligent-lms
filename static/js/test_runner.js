@@ -35,9 +35,17 @@ class TestRunner {
 
       if (data.status === 'success' && data.questions && data.questions.length > 0) {
         this.questions = data.questions;
+        if (this.category === 'puc_degree') {
+          const subjectOrder = { Physics: 0, Chemistry: 1, Mathematics: 2 };
+          this.questions.sort((a, b) => {
+            const orderDifference = (subjectOrder[a.subject] ?? 3) - (subjectOrder[b.subject] ?? 3);
+            return orderDifference || a.subject.localeCompare(b.subject) || a.topic.localeCompare(b.topic);
+          });
+        }
         this.renderLoading(false);
         this.startTimer();
         this.renderQuestionPalette();
+        this.renderSubjectSections();
         this.displayQuestion(0);
       } else {
         this.renderError("Failed to load questions from database.");
@@ -65,7 +73,15 @@ class TestRunner {
     if (!paletteContainer) return;
 
     paletteContainer.innerHTML = '';
+    let lastSubject = null;
     this.questions.forEach((q, idx) => {
+      if (this.category === 'puc_degree' && q.subject !== lastSubject) {
+        const sectionHeading = document.createElement('div');
+        sectionHeading.className = 'w-100 small fw-bold text-primary mt-2';
+        sectionHeading.textContent = q.subject;
+        paletteContainer.appendChild(sectionHeading);
+        lastSubject = q.subject;
+      }
       const badge = document.createElement('div');
       badge.className = `question-badge ${idx === 0 ? 'active' : ''}`;
       badge.id = `palette-badge-${idx}`;
@@ -73,6 +89,30 @@ class TestRunner {
       badge.title = `Question ${idx + 1} (${q.subject})`;
       badge.onclick = () => this.displayQuestion(idx);
       paletteContainer.appendChild(badge);
+    });
+  }
+
+  renderSubjectSections() {
+    const sectionsContainer = document.getElementById('subjectSections');
+    if (!sectionsContainer || this.category !== 'puc_degree') return;
+
+    sectionsContainer.innerHTML = '';
+    const firstQuestionBySubject = new Map();
+    const counts = new Map();
+    this.questions.forEach((question, index) => {
+      if (!firstQuestionBySubject.has(question.subject)) {
+        firstQuestionBySubject.set(question.subject, index);
+      }
+      counts.set(question.subject, (counts.get(question.subject) || 0) + 1);
+    });
+
+    firstQuestionBySubject.forEach((firstIndex, subject) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-outline-primary btn-sm rounded-pill';
+      button.textContent = `${subject} · ${counts.get(subject)} questions`;
+      button.onclick = () => this.displayQuestion(firstIndex);
+      sectionsContainer.appendChild(button);
     });
   }
 
@@ -94,7 +134,7 @@ class TestRunner {
     const qTextElem = document.getElementById('qText');
     const progressBar = document.getElementById('testProgress');
 
-    if (qNumberElem) qNumberElem.textContent = `Question ${index + 1} of ${this.questions.length}`;
+    if (qNumberElem) qNumberElem.textContent = `Question ${index + 1}`;
     if (qSubjectElem) qSubjectElem.textContent = q.subject;
     if (qDifficultyElem) qDifficultyElem.textContent = q.difficulty || 'Standard';
     if (qTextElem) qTextElem.textContent = q.question;
@@ -279,6 +319,7 @@ class TestRunner {
           category: this.category,
           student_id: this.studentId,
           test_title: this.testTitle,
+          exam: this.category === 'puc_degree' ? this.subject : null,
           answers: answersPayload
         })
       });

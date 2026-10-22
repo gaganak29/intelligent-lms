@@ -180,13 +180,20 @@ def puc_degree_dashboard():
 @app.route('/puc-degree/test')
 @login_required
 def puc_degree_test():
-    """100-question CET, JEE, or DSA Aptitude assessment."""
+    """Subject-balanced CET/JEE or DSA Aptitude assessment."""
     student_id = current_student()['id']
     subject = request.args.get('subject', 'CET')
     allowed_subjects = {'CET', 'JEE', 'DSA Aptitude'}
     if subject not in allowed_subjects:
         return redirect(url_for('puc_degree_dashboard'))
-    return render_template('puc_degree/test.html', student_id=student_id, assessment_subject=subject)
+    question_count = 150 if subject in {'CET', 'JEE'} else 50
+    return render_template(
+        'puc_degree/test.html',
+        student_id=student_id,
+        assessment_subject=subject,
+        question_count=question_count,
+        questions_per_subject=50,
+    )
 
 @app.route('/puc-degree/performance')
 @login_required
@@ -234,7 +241,7 @@ def download_performance_report(category, filename_prefix):
         ('Performance Tier', perf['ml_predicted_level']),
         ('Mastery Cluster', perf['ml_cluster']),
         ('Games Recorded', perf['game_stats']['total_games']),
-        ('Games Average Accuracy (%)', perf['game_stats']['avg_accuracy']),
+        ('Games Average Score (%)', perf['game_stats']['avg_accuracy']),
     ]
     for label, value in summary:
         writer.writerow([label, value])
@@ -249,6 +256,25 @@ def download_performance_report(category, filename_prefix):
             subject['total_asked'],
             f"{subject['percentage']}%"
         ])
+
+    if category == 'puc_degree':
+        for assessment in perf['assessment_breakdowns']:
+            writer.writerow([])
+            writer.writerow([f"{assessment['exam']} Subject Scores"])
+            writer.writerow(['Subject', 'Correct', 'Total Asked', 'Score (%)'])
+            for subject in assessment['subjects']:
+                writer.writerow([
+                    subject['subject'],
+                    subject['correct'],
+                    subject['total_asked'],
+                    f"{subject['percentage']}%"
+                ])
+            writer.writerow([
+                'Overall Score',
+                assessment['total_correct'],
+                assessment['total_asked'],
+                f"{assessment['percentage']}%"
+            ])
 
     writer.writerow([])
     writer.writerow(['Test History'])
@@ -278,12 +304,14 @@ def api_get_questions():
     Strictly guarantees NO duplicates within the active test set.
     """
     category = request.args.get('category', 'highschool')
+    subject = request.args.get('subject', None)
     requested_count = request.args.get('count')
-    if requested_count in (None, '', 'all'):
-        count = 100
+    if category == 'puc_degree' and subject in {'CET', 'JEE'}:
+        count = 150
+    elif requested_count in (None, '', 'all'):
+        count = 50 if category == 'puc_degree' else 100
     else:
         count = max(1, int(requested_count))
-    subject = request.args.get('subject', None)
 
     questions = fetch_unique_test_questions(category, count=count, subject=subject)
 
@@ -315,10 +343,16 @@ def api_submit_test():
     student = current_student()
     if student['category'] != category or data.get('student_id') not in (None, student_id):
         return jsonify({'status': 'error', 'message': 'Student session does not match this test'}), 403
+    exam = data.get('exam')
+    if category == 'puc_degree':
+        if exam not in {'CET', 'JEE', 'DSA Aptitude'}:
+            return jsonify({'status': 'error', 'message': 'Select a valid PUC/Degree assessment'}), 400
+    else:
+        exam = None
     test_title = data.get('test_title', 'General Subject Assessment' if category == 'highschool' else 'Logical & Technical Assessment')
     answers_data = data.get('answers', [])
 
-    result = record_test_result(student_id, category, test_title, answers_data)
+    result = record_test_result(student_id, category, test_title, answers_data, exam=exam)
     return jsonify({
         "status": "success",
         "result": result

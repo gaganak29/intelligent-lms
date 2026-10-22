@@ -95,12 +95,13 @@ def get_student_performance_data(student_id, category):
         'General Knowledge': 'Geography',
         'Social Science': 'History'
     }
+    puc_exam_names = {'CET', 'JEE', 'DSA Aptitude'}
     conn = get_db_connection()
     cursor = conn.cursor()
 
     # 1. Fetch Tests
     cursor.execute('''
-        SELECT id, test_title, total_questions, correct_answers, incorrect_answers,
+        SELECT id, test_title, exam, total_questions, correct_answers, incorrect_answers,
                unattempted, score, percentage, performance_level, created_at
         FROM tests
         WHERE student_id = ? AND category = ?
@@ -142,7 +143,61 @@ def get_student_performance_data(student_id, category):
             GROUP BY q.subject
         ''', (student_id, category))
     subject_rows = [dict(r) for r in cursor.fetchall()]
+    assessment_rows = []
+    if category == 'puc_degree':
+        cursor.execute('''
+            SELECT exam, subject, total_asked, correct_count
+            FROM (
+                SELECT
+                    CASE
+                        WHEN t.exam IN ('CET', 'JEE', 'DSA Aptitude') THEN t.exam
+                        WHEN t.test_title LIKE '%CET%' THEN 'CET'
+                        WHEN t.test_title LIKE '%JEE%' THEN 'JEE'
+                        WHEN t.test_title LIKE '%DSA%' THEN 'DSA Aptitude'
+                        ELSE NULL
+                    END AS exam,
+                    q.subject,
+                    COUNT(tq.id) AS total_asked,
+                    SUM(tq.is_correct) AS correct_count
+                FROM test_questions tq
+                JOIN questions q ON tq.question_id = q.id
+                JOIN tests t ON tq.test_id = t.id
+                WHERE t.student_id = ? AND t.category = ?
+                GROUP BY 1, q.subject
+            )
+            WHERE exam IS NOT NULL AND subject NOT IN ('CET', 'JEE', 'DSA Aptitude')
+        ''', (student_id, category))
+        assessment_rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
+
+    assessment_breakdowns = [
+        {
+            'exam': exam,
+            'subjects': [],
+            'total_correct': 0,
+            'total_asked': 0,
+            'percentage': 0.0,
+        }
+        for exam in ('CET', 'JEE', 'DSA Aptitude')
+    ]
+    assessment_by_exam = {item['exam']: item for item in assessment_breakdowns}
+    for row in assessment_rows:
+        total_asked = row['total_asked']
+        correct = row['correct_count'] or 0
+        assessment_by_exam[row['exam']]['subjects'].append({
+            'subject': row['subject'],
+            'total_asked': total_asked,
+            'correct': correct,
+            'percentage': round((correct / total_asked * 100), 1) if total_asked else 0.0
+        })
+    for assessment in assessment_breakdowns:
+        assessment['subjects'].sort(key=lambda item: item['subject'])
+        assessment['total_correct'] = sum(item['correct'] for item in assessment['subjects'])
+        assessment['total_asked'] = sum(item['total_asked'] for item in assessment['subjects'])
+        assessment['percentage'] = (
+            round(assessment['total_correct'] / assessment['total_asked'] * 100, 1)
+            if assessment['total_asked'] else 0.0
+        )
 
     # Fallback when student has no tests yet
     if not test_rows:
@@ -165,6 +220,7 @@ def get_student_performance_data(student_id, category):
             "strong_subjects": [],
             "weak_subjects": [],
             "subject_breakdown": [],
+            "assessment_breakdowns": assessment_breakdowns,
             "game_stats": {"total_games": len(game_rows), "avg_accuracy": 0.0},
             "history_labels": [],
             "history_scores": [],
@@ -241,6 +297,8 @@ def get_student_performance_data(student_id, category):
         normalized_subject = subject_aliases.get(original_subject, original_subject)
         if category == 'highschool' and normalized_subject not in allowed_highschool_subjects:
             continue
+        if category == 'puc_degree' and normalized_subject in puc_exam_names:
+            continue
 
         tot = s['total_asked']
         cor = s['correct_count'] or 0
@@ -308,6 +366,7 @@ def get_student_performance_data(student_id, category):
         "strong_subjects": strong_subjects,
         "weak_subjects": weak_subjects,
         "subject_breakdown": subject_breakdown,
+        "assessment_breakdowns": assessment_breakdowns,
         "game_stats": {
             "total_games": len(game_rows),
             "avg_accuracy": game_acc

@@ -19,7 +19,13 @@
     <div class="spinner-border text-primary" style="width: 3.5rem; height: 3.5rem;" role="status">
       <span class="visually-hidden">Loading...</span>
     </div>
-    <div class="h5 fw-bold text-dark mt-3">Generating 100 Unique {{ assessment_subject }} Questions...</div>
+    <div class="h5 fw-bold text-dark mt-3">
+      {% if assessment_subject in ('CET', 'JEE') %}
+      Generating 50 Unique Questions Each for Physics, Chemistry, and Mathematics...
+      {% else %}
+      Generating {{ question_count }} Unique {{ assessment_subject }} Questions...
+      {% endif %}
+    </div>
     <p class="text-muted small">Preparing your personalized technical assessment set.</p>
   </div>
 
@@ -57,6 +63,11 @@
         </div>
       </div>
 
+      <div class="card card-modern p-3 mb-4">
+        <div class="small text-muted fw-semibold mb-2">SUBJECT SECTIONS</div>
+        <div id="subjectSections" class="d-flex flex-wrap gap-2"></div>
+      </div>
+
       <div class="row g-4">
         <!-- Question & Options Panel -->
         <div class="col-lg-8">
@@ -67,7 +78,7 @@
               <span class="badge bg-primary-subtle text-primary fw-bold px-3 py-1 rounded-pill" id="qSubject">Domain</span>
               <div class="d-flex align-items-center gap-2">
                 <span class="badge bg-light text-muted border px-2 py-1" id="qDifficulty">Medium</span>
-                <span class="fw-bold text-dark" id="qNumber">Question 1 of 100</span>
+                <span class="fw-bold text-dark" id="qNumber">Question 1</span>
               </div>
             </div>
 
@@ -95,16 +106,16 @@
           </div>
         </div>
 
-        <!-- Question Grid Navigator (1 to 100) -->
+        <!-- Question Grid Navigator -->
         <div class="col-lg-4">
           <div class="card card-modern p-4">
             <div class="d-flex justify-content-between align-items-center mb-3">
-              <h6 class="fw-bold text-dark mb-0">Question Navigator (1 - 100)</h6>
-              <small class="text-muted">Instant jump</small>
+              <h6 class="fw-bold text-dark mb-0">Question Index</h6>
+              <small class="text-muted">Jump to a question</small>
             </div>
 
             <div class="d-flex flex-wrap gap-2 mb-4" id="questionPalette" style="max-height: 480px; overflow-y: auto;">
-              <!-- 100 Badges dynamically rendered -->
+              <!-- Question badges are rendered dynamically -->
             </div>
 
             <div class="p-3 bg-light rounded-3 border small">
@@ -141,7 +152,7 @@
 
           <span class="badge bg-primary-subtle text-primary px-3 py-1 rounded-pill fw-bold mb-2">Assessment Concluded</span>
           <h2 class="fw-bold text-dark mb-1">{{ assessment_subject }} Scorecard</h2>
-          <p class="text-muted mb-4">Complete 100-question evaluation saved to SQLite for performance trend tracking.</p>
+          <p class="text-muted mb-4">Complete {{ question_count }}-question evaluation saved to SQLite for performance trend tracking.</p>
 
           <!-- Performance Badge -->
           <div class="mb-4">
@@ -153,7 +164,7 @@
             <div class="col-6 col-md-3">
               <div class="p-3 bg-light rounded-4 border text-center">
                 <div class="text-muted small fw-medium">Total Questions</div>
-                <div class="h3 fw-bold text-dark mb-0" id="resTotalQ">100</div>
+                <div class="h3 fw-bold text-dark mb-0" id="resTotalQ">{{ question_count }}</div>
               </div>
             </div>
             <div class="col-6 col-md-3">
@@ -181,7 +192,7 @@
             <div class="row align-items-center gy-3">
               <div class="col-sm-6 text-sm-start border-end-sm">
                 <div class="text-muted small fw-bold text-uppercase">Score Obtained</div>
-                <div class="display-6 fw-bold text-primary" id="resScore">0/100</div>
+                <div class="display-6 fw-bold text-primary" id="resScore">0/{{ question_count }}</div>
               </div>
               <div class="col-sm-6 text-sm-end">
                 <div class="text-muted small fw-bold text-uppercase">Overall Proficiency</div>
@@ -196,7 +207,7 @@
               <i class="fa-solid fa-chart-pie me-1"></i> Technical Analytics Dashboard
             </a>
             <a href="{{ url_for('puc_degree_test', subject=assessment_subject) }}" class="btn btn-outline-primary btn-lg px-4 rounded-pill fw-semibold">
-              <i class="fa-solid fa-rotate-right me-1"></i> Retake New 100-Q Test
+              <i class="fa-solid fa-rotate-right me-1"></i> Retake New {{ question_count }}-Q Test
             </a>
             <a href="{{ url_for('puc_degree_dashboard') }}" class="btn btn-outline-secondary btn-lg px-4 rounded-pill fw-semibold">
               <i class="fa-solid fa-house me-1"></i> Technical Hub
@@ -240,7 +251,7 @@
     runner = new TestRunner({
       category: 'puc_degree',
       subject: {{ assessment_subject|tojson }},
-      count: 'all',
+      count: {{ question_count }},
       studentId: {{ student_id }},
       testTitle: `PUC & Degree {{ assessment_subject }}`
     });

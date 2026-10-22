@@ -21,7 +21,7 @@
         <i class="fa-solid fa-chart-line me-1"></i> Technical Analytics & ML Profiling
       </span>
       <h1 class="display-6 fw-bold text-dark mb-1">Technical Performance Dashboard</h1>
-      <p class="text-muted mb-0">Multi-dimensional tracking of computer science concepts, algorithmic speed, accuracy distribution, and adaptive recommendations.</p>
+      <p class="text-muted mb-0">Multi-dimensional tracking of subject scores, algorithmic concepts, and adaptive recommendations.</p>
     </div>
     <div class="d-flex gap-2">
       <a href="{{ url_for('download_puc_degree_performance') }}" class="btn btn-outline-primary rounded-pill px-4 fw-bold">
@@ -96,6 +96,33 @@
     </div>
   </div>
 
+  <div class="mb-4">
+    <h4 class="fw-bold text-dark mb-3">Assessment Scores by Subject</h4>
+    <div class="row g-3">
+      {% for assessment in perf.assessment_breakdowns %}
+      <div class="col-lg-4">
+        <div class="card card-modern p-4 h-100">
+          <h5 class="fw-bold text-dark mb-3">{{ assessment.exam }}</h5>
+          {% if assessment.subjects %}
+            {% for subject in assessment.subjects %}
+            <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+              <span class="text-dark">{{ subject.subject }}</span>
+              <strong class="text-primary">{{ subject.correct }}/{{ subject.total_asked }} ({{ subject.percentage }}%)</strong>
+            </div>
+            {% endfor %}
+            <div class="d-flex justify-content-between align-items-center border-top mt-2 pt-3">
+              <span class="fw-bold text-dark">Overall Score</span>
+              <strong class="text-primary">{{ assessment.total_correct }}/{{ assessment.total_asked }} ({{ assessment.percentage }}%)</strong>
+            </div>
+          {% else %}
+            <p class="text-muted small mb-0">No completed {{ assessment.exam }} assessment yet.</p>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
   <!-- Strong vs Weak Topics Cards -->
   <div class="row g-4 mb-4">
     <div class="col-md-6">
@@ -148,7 +175,7 @@
     <div class="col-lg-7">
       <div class="card card-modern p-4 h-100">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="fw-bold text-dark mb-0">Topic-Wise Technical Accuracy</h5>
+          <h5 class="fw-bold text-dark mb-0">Subject-Wise Scores</h5>
           <span class="badge bg-light text-muted border">Bar Chart</span>
         </div>
         <div style="min-height: 280px;">
@@ -161,11 +188,11 @@
     <div class="col-lg-5">
       <div class="card card-modern p-4 h-100">
         <div class="d-flex justify-content-between align-items-center mb-3">
-          <h5 class="fw-bold text-dark mb-0">Accuracy Ratio</h5>
+          <h5 class="fw-bold text-dark mb-0">Answer Breakdown</h5>
           <span class="badge bg-light text-muted border">Doughnut</span>
         </div>
         <div class="d-flex align-items-center justify-content-center" style="min-height: 280px;">
-          <canvas id="accuracyDoughnutChart"></canvas>
+          <canvas id="answerBreakdownChart"></canvas>
         </div>
       </div>
     </div>
@@ -179,7 +206,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
           <div>
             <h5 class="fw-bold text-dark mb-1">Performance Trend Across Test Sessions</h5>
-            <small class="text-muted">Tracking percentage score evolution over sequential 100-question assessments.</small>
+            <small class="text-muted">Tracking percentage score evolution over your assessment sessions.</small>
           </div>
           <span class="badge bg-light text-muted border">Line Chart</span>
         </div>
@@ -205,8 +232,8 @@
         new Chart(topicCtx, {
           type: 'bar',
           data: {
-            labels: ['Arrays', 'Linked Lists', 'Trees', 'OOPS', 'Networks', 'DBMS'],
-            datasets: [{ label: 'Sample Benchmark (%)', data: [80, 70, 65, 85, 75, 90], backgroundColor: '#cbd5e1' }]
+            labels: ['No test data'],
+            datasets: [{ label: 'Score (%)', data: [0], backgroundColor: '#cbd5e1' }]
           },
           options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
         });
@@ -220,7 +247,7 @@
           data: {
             labels: labels,
             datasets: [{
-              label: 'Accuracy (%)',
+              label: 'Score (%)',
               data: dataVals,
               backgroundColor: bgColors,
               borderRadius: 6
@@ -237,7 +264,7 @@
     }
 
     // 2. DOUGHNUT CHART (CORRECT VS INCORRECT VS UNATTEMPTED)
-    const dCtx = document.getElementById('accuracyDoughnutChart');
+    const dCtx = document.getElementById('answerBreakdownChart');
     const correct = {{ perf.total_correct or 0 }};
     const incorrect = {{ perf.total_incorrect or 0 }};
     const unattempted = {{ perf.total_unattempted or 0 }};

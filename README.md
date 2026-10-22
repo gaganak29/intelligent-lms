@@ -85,8 +85,8 @@ AI_Powered_LMS_Project/
     │
     └── puc_degree/
         ├── dashboard.html      # PUC & Degree Technical Assessment Hub
-        ├── test.html           # 100-Question Logical & Technical Assessment (progression order)
-        └── performance.html    # Technical Performance Dashboard (Bar, Doughnut, and Line charts)
+        ├── test.html           # CET/JEE tests with 50 questions per subject; DSA has 5 questions per topic
+        └── performance.html    # Overall and subject scores by assessment plus historical score charts
 ```
 
 ---

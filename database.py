@@ -1,8 +1,13 @@
 import sqlite3
 import os
 import json
+from collections import Counter
 from werkzeug.security import check_password_hash, generate_password_hash
-from question_generator import generate_additional_questions
+from question_generator import (
+    DSA_APTITUDE_TOPICS,
+    generate_additional_questions,
+    _shuffle_options,
+)
 
 DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lms.db')
 HIGH_SCHOOL_ALLOWED_SUBJECTS = (
@@ -14,6 +19,21 @@ HIGH_SCHOOL_ALLOWED_SUBJECTS = (
     'Geography',
     'English',
 )
+PUC_EXAM_SUBJECTS = ('CET', 'JEE', 'DSA Aptitude')
+DSA_TOPIC_ALIASES = {
+    'hashing': 'Hash Maps',
+    'array complexity': 'Arrays',
+    'binary trees': 'Trees',
+    'binary search': 'Searching',
+}
+
+
+def _canonical_dsa_topic(value):
+    """Maps legacy DSA labels to the current assessment topic names."""
+    normalized = ' '.join((value or '').split()).casefold()
+    if normalized in DSA_TOPIC_ALIASES:
+        return DSA_TOPIC_ALIASES[normalized]
+    return next((topic for topic in DSA_APTITUDE_TOPICS if topic.casefold() == normalized), None)
 
 def get_db_connection():
     """Establishes and returns a connection to SQLite with row dictionary factory."""
@@ -48,6 +68,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS questions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             category TEXT NOT NULL,
+            exam TEXT,
             subject TEXT NOT NULL,
             topic TEXT NOT NULL,
             question TEXT NOT NULL,
@@ -57,9 +78,97 @@ def init_db():
             option_d TEXT NOT NULL,
             correct_answer TEXT NOT NULL,
             explanation TEXT NOT NULL,
-            difficulty TEXT DEFAULT 'Medium'
+            difficulty TEXT DEFAULT 'Medium',
+            is_active INTEGER NOT NULL DEFAULT 1
         )
     ''')
+    question_columns = [row['name'] for row in cursor.execute('PRAGMA table_info(questions)').fetchall()]
+    if 'is_active' not in question_columns:
+        cursor.execute('ALTER TABLE questions ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1')
+    if 'exam' not in question_columns:
+        cursor.execute('ALTER TABLE questions ADD COLUMN exam TEXT')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS app_migrations (
+            name TEXT PRIMARY KEY,
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    legacy_question_migration = 'replace-repeated-question-templates'
+    migration_applied = cursor.execute(
+        'SELECT 1 FROM app_migrations WHERE name = ?', (legacy_question_migration,)
+    ).fetchone()
+    if not migration_applied:
+        cursor.execute('''
+            UPDATE questions
+            SET is_active = 0
+            WHERE (category = 'puc_degree' AND subject IN ('CET', 'JEE', 'DSA Aptitude'))
+               OR (LOWER(question) LIKE '%question set %'
+                   OR LOWER(question) LIKE '%in question %'
+                   OR LOWER(question) LIKE '%in example %'
+                   OR LOWER(question) LIKE '%in trial %'
+                   OR LOWER(question) LIKE '%expression %?'
+                   OR LOWER(question) LIKE 'what is the time complexity of scanning an array of % elements once%'
+                   OR LOWER(question) LIKE 'how many indices does a zero-based array containing % items have?'
+                   OR LOWER(question) LIKE 'what is % + %?'
+                   OR LOWER(question) LIKE 'what is % - %?'
+                   OR LOWER(question) LIKE 'how many metres are equal to % kilometres?')
+        ''')
+        cursor.execute(
+            'INSERT INTO app_migrations (name) VALUES (?)',
+            (legacy_question_migration,)
+        )
+
+    option_shuffle_migration = 'shuffle-puc-exam-answer-options'
+    if not cursor.execute(
+        'SELECT 1 FROM app_migrations WHERE name = ?', (option_shuffle_migration,)
+    ).fetchone():
+        cursor.execute('''
+            SELECT id, question, option_a, option_b, option_c, option_d, correct_answer
+            FROM questions
+            WHERE category = 'puc_degree' AND exam IN ('CET', 'JEE', 'DSA Aptitude')
+              AND is_active = 1
+        ''')
+        for row in cursor.fetchall():
+            options, answer = _shuffle_options(
+                (row['option_a'], row['option_b'], row['option_c'], row['option_d']),
+                row['correct_answer'],
+                row['question'],
+            )
+            cursor.execute('''
+                UPDATE questions
+                SET option_a = ?, option_b = ?, option_c = ?, option_d = ?, correct_answer = ?
+                WHERE id = ?
+            ''', (*options, answer, row['id']))
+        cursor.execute(
+            'INSERT INTO app_migrations (name) VALUES (?)',
+            (option_shuffle_migration,)
+        )
+
+    dsa_topic_migration = 'standardize-dsa-assessment-topics'
+    if not cursor.execute(
+        'SELECT 1 FROM app_migrations WHERE name = ?', (dsa_topic_migration,)
+    ).fetchone():
+        cursor.execute('''
+            SELECT id, subject, topic
+            FROM questions
+            WHERE category = 'puc_degree' AND exam = 'DSA Aptitude'
+        ''')
+        for row in cursor.fetchall():
+            canonical_topic = (
+                _canonical_dsa_topic(row['topic'])
+                or _canonical_dsa_topic(row['subject'])
+            )
+            if canonical_topic:
+                cursor.execute('''
+                    UPDATE questions
+                    SET subject = ?, topic = ?
+                    WHERE id = ?
+                ''', (canonical_topic, canonical_topic, row['id']))
+        cursor.execute(
+            'INSERT INTO app_migrations (name) VALUES (?)',
+            (dsa_topic_migration,)
+        )
 
     # 3. Tests table (Stores completed tests)
     cursor.execute('''
@@ -79,6 +188,9 @@ def init_db():
             FOREIGN KEY (student_id) REFERENCES students (id)
         )
     ''')
+    test_columns = [row['name'] for row in cursor.execute('PRAGMA table_info(tests)').fetchall()]
+    if 'exam' not in test_columns:
+        cursor.execute('ALTER TABLE tests ADD COLUMN exam TEXT')
 
     # 4. Test Questions table (Stores exact questions and choices for an active or completed test)
     # Guaranteed NO duplicates per test session
@@ -210,25 +322,97 @@ def fetch_unique_test_questions(category, count=50, subject=None):
     Selects exactly `count` unique questions for a test session.
     Guarantees:
     - Never duplicates a question within the same test.
-    - Balanced distribution across the allowed high-school subjects only.
+    - CET and JEE contain 50 questions in each of Physics, Chemistry, and Mathematics.
+    - Balanced distribution across the allowed high-school subjects.
     """
     conn = get_db_connection()
     cursor = conn.cursor()
+    general_puc_test = category == 'puc_degree' and (not subject or subject == 'All')
 
     if count > 0:
-        if subject and subject != 'All':
-            cursor.execute('SELECT * FROM questions WHERE category = ? AND subject = ?', (category, subject))
+        if category == 'highschool' and (not subject or subject == 'All'):
+            placeholders = ', '.join('?' for _ in HIGH_SCHOOL_ALLOWED_SUBJECTS)
+            cursor.execute(
+                f'SELECT * FROM questions WHERE category = ? AND subject IN ({placeholders}) AND is_active = 1',
+                (category, *HIGH_SCHOOL_ALLOWED_SUBJECTS)
+            )
+        elif general_puc_test:
+            cursor.execute(
+                'SELECT * FROM questions WHERE category = ? AND exam IS NULL AND is_active = 1',
+                (category,)
+            )
+        elif category == 'puc_degree' and subject in PUC_EXAM_SUBJECTS:
+            cursor.execute(
+                'SELECT * FROM questions WHERE category = ? AND exam = ? AND is_active = 1',
+                (category, subject)
+            )
+        elif subject and subject != 'All':
+            cursor.execute('SELECT * FROM questions WHERE category = ? AND subject = ? AND is_active = 1', (category, subject))
         else:
-            cursor.execute('SELECT * FROM questions WHERE category = ?', (category,))
+            cursor.execute('SELECT * FROM questions WHERE category = ? AND is_active = 1', (category,))
         existing_questions = [dict(row) for row in cursor.fetchall()]
-        if len(existing_questions) < count:
-            additions = generate_additional_questions(category, existing_questions, count, subject=subject)
+        exam_subjects = ('Physics', 'Chemistry', 'Mathematics') if (
+            category == 'puc_degree' and subject in {'CET', 'JEE'}
+        ) else ()
+        subject_counts = Counter(row['subject'] for row in existing_questions)
+        required_subject_counts = None
+        required_topic_counts = None
+        if exam_subjects:
+            required_subject_counts = {
+                section: max(0, 50 - subject_counts[section])
+                for section in exam_subjects
+            }
+            section_shortfall = sum(required_subject_counts.values())
+        elif category == 'puc_degree' and subject == 'DSA Aptitude':
+            topic_counts = Counter(
+                _canonical_dsa_topic(row.get('topic')) or _canonical_dsa_topic(row.get('subject'))
+                for row in existing_questions
+            )
+            required_topic_counts = {
+                topic: max(0, 5 - topic_counts[topic])
+                for topic in DSA_APTITUDE_TOPICS
+            }
+            section_shortfall = sum(required_topic_counts.values())
+        else:
+            section_shortfall = 0
+        questions_needed = max(count - len(existing_questions), section_shortfall)
+        if questions_needed > 0:
+            if category == 'puc_degree' and subject in PUC_EXAM_SUBJECTS:
+                cursor.execute('SELECT question FROM questions')
+            elif subject and subject != 'All':
+                cursor.execute('''
+                    SELECT question FROM questions
+                    WHERE NOT (category = ? AND subject = ?)
+                ''', (category, subject))
+            elif general_puc_test:
+                cursor.execute(
+                    'SELECT question FROM questions WHERE category != ? OR exam IS NOT NULL',
+                    (category,)
+                )
+            else:
+                cursor.execute(
+                    'SELECT question FROM questions WHERE category != ?',
+                    (category,)
+                )
+            other_category_questions = [
+                {'question': row['question']} for row in cursor.fetchall()
+            ]
+            generation_pool = existing_questions + other_category_questions
+            generation_target = len(generation_pool) + questions_needed
+            additions = generate_additional_questions(
+                category,
+                generation_pool,
+                generation_target,
+                subject=subject,
+                required_subject_counts=required_subject_counts,
+                required_topic_counts=required_topic_counts,
+            )
             for question in additions:
                 cursor.execute('''
-                    INSERT INTO questions (category, subject, topic, question, option_a, option_b,
+                    INSERT INTO questions (category, exam, subject, topic, question, option_a, option_b,
                                            option_c, option_d, correct_answer, explanation, difficulty)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (question['category'], question['subject'], question['topic'], question['question'],
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (question['category'], question.get('exam'), question['subject'], question['topic'], question['question'],
                       question['option_a'], question['option_b'], question['option_c'], question['option_d'],
                       question['correct_answer'], question['explanation'], question['difficulty']))
             conn.commit()
@@ -246,20 +430,20 @@ def fetch_unique_test_questions(category, count=50, subject=None):
         placeholders = ', '.join('?' for _ in subject_values)
         if subject and subject != 'All':
             cursor.execute('''
-                SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                SELECT DISTINCT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
                                 correct_answer, explanation, difficulty
                 FROM questions
-                WHERE category = ? AND subject = ?
+                WHERE category = ? AND subject = ? AND is_active = 1
                 ORDER BY RANDOM()
                 LIMIT ?
             ''', (category, subject, count))
             questions = [dict(row) for row in cursor.fetchall()]
         else:
             cursor.execute(f'''
-                SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                SELECT DISTINCT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
                                 correct_answer, explanation, difficulty
                 FROM questions
-                WHERE category = ? AND subject IN ({placeholders})
+                WHERE category = ? AND subject IN ({placeholders}) AND is_active = 1
                 ORDER BY RANDOM()
             ''', (category, *subject_values))
             all_rows = [dict(row) for row in cursor.fetchall()]
@@ -270,18 +454,85 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                     seen_ids.add(row['id'])
                     questions.append(row)
     else:
-        if subject and subject != 'All':
+        if category == 'puc_degree' and subject in PUC_EXAM_SUBJECTS:
             cursor.execute('''
-                SELECT DISTINCT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                SELECT DISTINCT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
                                 correct_answer, explanation, difficulty
                 FROM questions
-                WHERE category = ? AND subject = ?
+                WHERE category = ? AND exam = ? AND is_active = 1
+                ORDER BY RANDOM()
+            ''', (category, subject))
+            buckets = {}
+            for row in cursor.fetchall():
+                item = dict(row)
+                buckets.setdefault(item['subject'], []).append(item)
+
+            questions = []
+            if subject in {'CET', 'JEE'}:
+                for question_subject in ('Physics', 'Chemistry', 'Mathematics'):
+                    unique_text = set()
+                    selected = []
+                    for question in buckets.get(question_subject, []):
+                        normalized_text = ' '.join(question['question'].split()).casefold()
+                        if normalized_text not in unique_text:
+                            unique_text.add(normalized_text)
+                            selected.append(question)
+                        if len(selected) == 50:
+                            break
+                    if len(selected) < 50:
+                        conn.close()
+                        raise RuntimeError(
+                            f'{subject} question bank has only {len(selected)} unique '
+                            f'{question_subject} questions; 50 are required.'
+                        )
+                    questions.extend(selected)
+            elif subject == 'DSA Aptitude':
+                unique_text = set()
+                for topic in DSA_APTITUDE_TOPICS:
+                    selected = []
+                    for question in buckets.get(topic, []):
+                        normalized_text = ' '.join(question['question'].split()).casefold()
+                        if normalized_text in unique_text:
+                            continue
+                        unique_text.add(normalized_text)
+                        selected.append(question)
+                        if len(selected) == 5:
+                            break
+                    if len(selected) < 5:
+                        conn.close()
+                        raise RuntimeError(
+                            f'DSA Aptitude question bank has only {len(selected)} unique '
+                            f'{topic} questions; 5 are required.'
+                        )
+                    questions.extend(selected)
+            else:
+                subject_order = sorted(buckets)
+                while len(questions) < count and any(buckets.values()):
+                    for question_subject in subject_order:
+                        if buckets[question_subject] and len(questions) < count:
+                            questions.append(buckets[question_subject].pop())
+        elif subject and subject != 'All':
+            cursor.execute('''
+                SELECT DISTINCT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
+                                correct_answer, explanation, difficulty
+                FROM questions
+                WHERE category = ? AND subject = ? AND is_active = 1
                 ORDER BY RANDOM()
                 LIMIT ?
             ''', (category, subject, count))
             questions = [dict(row) for row in cursor.fetchall()]
         else:
-            cursor.execute('SELECT DISTINCT subject FROM questions WHERE category = ?', (category,))
+            if general_puc_test:
+                cursor.execute(
+                    '''SELECT DISTINCT subject FROM questions
+                       WHERE category = ? AND exam IS NULL AND is_active = 1''',
+                    (category,)
+                )
+            else:
+                cursor.execute(
+                    'SELECT DISTINCT subject FROM questions WHERE category = ? AND is_active = 1',
+                    (category,)
+                )
             subjects = [row['subject'] for row in cursor.fetchall()]
 
             questions = []
@@ -290,11 +541,12 @@ def fetch_unique_test_questions(category, count=50, subject=None):
             if subjects:
                 per_subj = max(1, count // len(subjects))
                 for s in subjects:
-                    cursor.execute('''
-                        SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                    cursor.execute(f'''
+                        SELECT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
                                correct_answer, explanation, difficulty
                         FROM questions
-                        WHERE category = ? AND subject = ?
+                        WHERE category = ? AND subject = ? AND is_active = 1
+                        {'AND exam IS NULL' if general_puc_test else ''}
                         ORDER BY RANDOM()
                         LIMIT ?
                     ''', (category, s, per_subj))
@@ -308,23 +560,30 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                 if seen_ids:
                     placeholders = ','.join('?' for _ in seen_ids)
                     query = f'''
-                        SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                        SELECT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
                                correct_answer, explanation, difficulty
                         FROM questions
-                        WHERE category = ? AND id NOT IN ({placeholders})
+                        WHERE category = ? AND id NOT IN ({placeholders}) AND is_active = 1
+                        {'AND exam IS NULL' if general_puc_test else ''}
                         ORDER BY RANDOM()
                         LIMIT ?
                     '''
-                    cursor.execute(query, [category] + list(seen_ids) + [needed])
+                    params = [category] + list(seen_ids)
+                    params.append(needed)
+                    cursor.execute(query, params)
                 else:
-                    cursor.execute('''
-                        SELECT id, category, subject, topic, question, option_a, option_b, option_c, option_d,
+                    query = f'''
+                        SELECT id, category, exam, subject, topic, question, option_a, option_b, option_c, option_d,
                                correct_answer, explanation, difficulty
                         FROM questions
-                        WHERE category = ?
+                        WHERE category = ? AND is_active = 1
+                        {'AND exam IS NULL' if general_puc_test else ''}
                         ORDER BY RANDOM()
                         LIMIT ?
-                    ''', (category, needed))
+                    '''
+                    params = [category]
+                    params.append(needed)
+                    cursor.execute(query, params)
 
                 for row in cursor.fetchall():
                     if row['id'] not in seen_ids and len(questions) < count:
@@ -346,9 +605,9 @@ def fetch_unique_test_questions(category, count=50, subject=None):
 
     return sanitized_questions
 
-def record_test_result(student_id, category, test_title, answers_data):
+def record_test_result(student_id, category, test_title, answers_data, exam=None):
     """
-    Replaces the previous test session and saves the new test and responses.
+    Saves a test session and its responses for historical performance tracking.
     answers_data: list of dicts with:
     { 'question_id': int, 'question_number': int, 'selected_option': str, 'correct_answer': str }
     """
@@ -397,18 +656,10 @@ def record_test_result(student_id, category, test_title, answers_data):
     cursor = conn.cursor()
 
     cursor.execute('''
-        DELETE FROM test_questions
-        WHERE test_id IN (
-            SELECT id FROM tests WHERE student_id = ? AND category = ?
-        )
-    ''', (student_id, category))
-    cursor.execute('DELETE FROM tests WHERE student_id = ? AND category = ?', (student_id, category))
-
-    cursor.execute('''
         INSERT INTO tests (student_id, category, test_title, total_questions, correct_answers,
-                           incorrect_answers, unattempted, score, percentage, performance_level)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (student_id, category, test_title, total, correct, incorrect, unattempted, score, percentage, perf_level))
+                           incorrect_answers, unattempted, score, percentage, performance_level, exam)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (student_id, category, test_title, total, correct, incorrect, unattempted, score, percentage, perf_level, exam))
 
     test_id = cursor.lastrowid
 
