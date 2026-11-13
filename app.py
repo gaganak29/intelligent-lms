@@ -12,6 +12,7 @@ from summarizer import textrank_summarize
 from map_generator import generate_visual_map
 from ml_engine import get_student_performance_data, get_model_explainability_metrics
 from ai_services import generate_quiz_from_notes, solve_doubt_ai, compare_summarization_study
+from question_generator import warm_question_candidate_cache
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'intelligent-lms-secret-key-cse-2026'
@@ -19,6 +20,7 @@ app.config['SECRET_KEY'] = 'intelligent-lms-secret-key-cse-2026'
 # Initialize database tables on startup
 with app.app_context():
     init_db()
+    warm_question_candidate_cache()
 
 def login_required(view):
     @wraps(view)
@@ -313,7 +315,13 @@ def api_get_questions():
     else:
         count = max(1, int(requested_count))
 
-    questions = fetch_unique_test_questions(category, count=count, subject=subject)
+    try:
+        questions = fetch_unique_test_questions(category, count=count, subject=subject)
+    except RuntimeError as error:
+        return jsonify({
+            "status": "error",
+            "message": str(error),
+        }), 409
 
     # Re-number with serial numbers 1 to count
     formatted = []

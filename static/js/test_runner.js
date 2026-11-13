@@ -48,7 +48,7 @@ class TestRunner {
         this.renderSubjectSections();
         this.displayQuestion(0);
       } else {
-        this.renderError("Failed to load questions from database.");
+        this.renderError(data.message || "Failed to load questions from database.");
       }
     } catch (err) {
       console.error(err);

@@ -44,6 +44,9 @@ python -m venv venv
 ```
 Open your browser and visit: **`http://127.0.0.1:5000`**
 
+### Assessment Question Reuse
+Each question is reserved in SQLite as soon as an assessment loads, so it will not be issued again to another student ID or a later attempt, including across High School and PUC/Degree assessments. Completed historical attempts are added to this exclusion list during database initialization. If an assessment ever runs out of unused questions, the app reports that instead of silently reusing old questions.
+
 ---
 
 ## 📁 Project Architecture & Structure

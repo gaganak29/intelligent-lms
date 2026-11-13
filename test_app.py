@@ -123,6 +123,92 @@ class TestLMS(unittest.TestCase):
         q_ids = [q['id'] for q in data['questions']]
         self.assertEqual(len(set(q_ids)), 50, "Duplicates found in PUC/Degree test!")
 
+    def test_questions_are_not_reused_between_attempts_or_categories(self):
+        original_db_file = database.DB_FILE
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database.DB_FILE = os.path.join(temp_dir, 'question-uniqueness.db')
+            try:
+                init_db()
+
+                first_highschool = database.fetch_unique_test_questions('highschool', count=100)
+                second_highschool = database.fetch_unique_test_questions('highschool', count=100)
+                self.assertFalse(
+                    {question['id'] for question in first_highschool}
+                    & {question['id'] for question in second_highschool}
+                )
+                self.assertFalse(
+                    {' '.join(question['question'].split()).casefold() for question in first_highschool}
+                    & {' '.join(question['question'].split()).casefold() for question in second_highschool}
+                )
+
+                first_cet = database.fetch_unique_test_questions('puc_degree', count=150, subject='CET')
+                second_cet = database.fetch_unique_test_questions('puc_degree', count=150, subject='CET')
+                self.assertFalse(
+                    {question['id'] for question in first_cet}
+                    & {question['id'] for question in second_cet}
+                )
+                self.assertFalse(
+                    {' '.join(question['question'].split()).casefold() for question in first_cet}
+                    & {' '.join(question['question'].split()).casefold() for question in second_cet}
+                )
+                for questions in (first_cet, second_cet):
+                    self.assertEqual(
+                        Counter(question['subject'] for question in questions),
+                        {'Physics': 50, 'Chemistry': 50, 'Mathematics': 50},
+                    )
+                    for subject in ('Physics', 'Chemistry', 'Mathematics'):
+                        section = [question for question in questions if question['subject'] == subject]
+                        self.assertGreaterEqual(
+                            len({question['topic'] for question in section}),
+                            3,
+                            f'CET {subject} should cover different topics within each attempt',
+                        )
+                        template_shapes = {
+                            re.sub(r'\d+(?:\.\d+)?', '#', question['question'])
+                            for question in section
+                        }
+                        self.assertGreater(
+                            len(template_shapes),
+                            7,
+                            f'CET {subject} should use multiple question formats, not just changed values',
+                        )
+
+                first_jee = database.fetch_unique_test_questions('puc_degree', count=150, subject='JEE')
+                second_jee = database.fetch_unique_test_questions('puc_degree', count=150, subject='JEE')
+                for questions in (first_jee, second_jee):
+                    self.assertEqual(
+                        Counter(question['subject'] for question in questions),
+                        {'Physics': 50, 'Chemistry': 50, 'Mathematics': 50},
+                    )
+                    for subject in ('Physics', 'Chemistry', 'Mathematics'):
+                        section = [question for question in questions if question['subject'] == subject]
+                        self.assertGreaterEqual(
+                            len({question['topic'] for question in section}),
+                            3,
+                            f'JEE {subject} should cover different topics within each attempt',
+                        )
+                        template_shapes = {
+                            re.sub(r'\d+(?:\.\d+)?', '#', question['question'])
+                            for question in section
+                        }
+                        self.assertGreater(
+                            len(template_shapes),
+                            7,
+                            f'JEE {subject} should use multiple question formats, not just changed values',
+                        )
+
+                highschool_text = {
+                    ' '.join(question['question'].split()).casefold()
+                    for question in first_highschool + second_highschool
+                }
+                cet_text = {
+                    ' '.join(question['question'].split()).casefold()
+                    for question in first_cet + second_cet + first_jee + second_jee
+                }
+                self.assertFalse(highschool_text & cet_text)
+            finally:
+                database.DB_FILE = original_db_file
+
     def test_exam_question_banks_are_unique_and_have_no_indexed_prompts(self):
         highschool_res = self.client.get('/api/questions?category=highschool&count=50')
         highschool_questions = json.loads(highschool_res.data)['questions']

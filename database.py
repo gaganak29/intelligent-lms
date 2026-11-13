@@ -119,6 +119,20 @@ def init_db():
             (legacy_question_migration,)
         )
 
+    diverse_exam_bank_migration = 'replace-repetitive-cet-jee-templates'
+    if not cursor.execute(
+        'SELECT 1 FROM app_migrations WHERE name = ?', (diverse_exam_bank_migration,)
+    ).fetchone():
+        cursor.execute('''
+            UPDATE questions
+            SET is_active = 0
+            WHERE category = 'puc_degree' AND exam IN ('CET', 'JEE') AND is_active = 1
+        ''')
+        cursor.execute(
+            'INSERT INTO app_migrations (name) VALUES (?)',
+            (diverse_exam_bank_migration,)
+        )
+
     option_shuffle_migration = 'shuffle-puc-exam-answer-options'
     if not cursor.execute(
         'SELECT 1 FROM app_migrations WHERE name = ?', (option_shuffle_migration,)
@@ -206,6 +220,46 @@ def init_db():
             FOREIGN KEY (question_id) REFERENCES questions (id)
         )
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS question_uses (
+            question_id INTEGER PRIMARY KEY,
+            question_text TEXT,
+            issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (question_id) REFERENCES questions (id)
+        )
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_question_uses_text
+        ON question_uses (question_text)
+    ''')
+    usage_columns = [row['name'] for row in cursor.execute('PRAGMA table_info(question_uses)').fetchall()]
+    if 'question_text' not in usage_columns:
+        cursor.execute('ALTER TABLE question_uses ADD COLUMN question_text TEXT')
+    issued_questions = cursor.execute('''
+        SELECT question_uses.question_id, questions.question
+        FROM question_uses
+        JOIN questions ON questions.id = question_uses.question_id
+    ''').fetchall()
+    cursor.executemany(
+        'UPDATE question_uses SET question_text = ? WHERE question_id = ?',
+        (
+            (' '.join(row['question'].split()).casefold(), row['question_id'])
+            for row in issued_questions
+        )
+    )
+    historical_questions = cursor.execute('''
+        SELECT DISTINCT q.id, q.question
+        FROM test_questions tq
+        JOIN questions q ON q.id = tq.question_id
+    ''').fetchall()
+    cursor.executemany(
+        'INSERT OR IGNORE INTO question_uses (question_id, question_text) VALUES (?, ?)',
+        (
+            (row['id'], ' '.join(row['question'].split()).casefold())
+            for row in historical_questions
+        )
+    )
 
     # 5. Game Results table
     cursor.execute('''
@@ -327,30 +381,69 @@ def fetch_unique_test_questions(category, count=50, subject=None):
     """
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute('BEGIN IMMEDIATE')
     general_puc_test = category == 'puc_degree' and (not subject or subject == 'All')
 
     if count > 0:
         if category == 'highschool' and (not subject or subject == 'All'):
             placeholders = ', '.join('?' for _ in HIGH_SCHOOL_ALLOWED_SUBJECTS)
             cursor.execute(
-                f'SELECT * FROM questions WHERE category = ? AND subject IN ({placeholders}) AND is_active = 1',
+                f'''SELECT * FROM questions
+                    WHERE category = ? AND subject IN ({placeholders}) AND is_active = 1
+                      AND id NOT IN (SELECT question_id FROM question_uses)
+                      AND lower(trim(question)) NOT IN (
+                          SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                      )''',
                 (category, *HIGH_SCHOOL_ALLOWED_SUBJECTS)
             )
         elif general_puc_test:
             cursor.execute(
-                'SELECT * FROM questions WHERE category = ? AND exam IS NULL AND is_active = 1',
+                '''SELECT * FROM questions
+                   WHERE category = ? AND exam IS NULL AND is_active = 1
+                     AND id NOT IN (SELECT question_id FROM question_uses)
+                     AND lower(trim(question)) NOT IN (
+                         SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                     )''',
                 (category,)
             )
         elif category == 'puc_degree' and subject in PUC_EXAM_SUBJECTS:
             cursor.execute(
-                'SELECT * FROM questions WHERE category = ? AND exam = ? AND is_active = 1',
+                '''SELECT * FROM questions
+                   WHERE category = ? AND exam = ? AND is_active = 1
+                     AND id NOT IN (SELECT question_id FROM question_uses)
+                     AND lower(trim(question)) NOT IN (
+                         SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                     )''',
                 (category, subject)
             )
         elif subject and subject != 'All':
-            cursor.execute('SELECT * FROM questions WHERE category = ? AND subject = ? AND is_active = 1', (category, subject))
+            cursor.execute(
+                '''SELECT * FROM questions
+                   WHERE category = ? AND subject = ? AND is_active = 1
+                     AND id NOT IN (SELECT question_id FROM question_uses)
+                     AND lower(trim(question)) NOT IN (
+                         SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                     )''',
+                (category, subject)
+            )
         else:
-            cursor.execute('SELECT * FROM questions WHERE category = ? AND is_active = 1', (category,))
-        existing_questions = [dict(row) for row in cursor.fetchall()]
+            cursor.execute(
+                '''SELECT * FROM questions
+                   WHERE category = ? AND is_active = 1
+                     AND id NOT IN (SELECT question_id FROM question_uses)
+                     AND lower(trim(question)) NOT IN (
+                         SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                     )''',
+                (category,)
+            )
+        existing_questions = []
+        seen_existing_text = set()
+        for row in cursor.fetchall():
+            question = dict(row)
+            normalized_text = ' '.join(question['question'].split()).casefold()
+            if normalized_text not in seen_existing_text:
+                seen_existing_text.add(normalized_text)
+                existing_questions.append(question)
         exam_subjects = ('Physics', 'Chemistry', 'Mathematics') if (
             category == 'puc_degree' and subject in {'CET', 'JEE'}
         ) else ()
@@ -377,36 +470,25 @@ def fetch_unique_test_questions(category, count=50, subject=None):
             section_shortfall = 0
         questions_needed = max(count - len(existing_questions), section_shortfall)
         if questions_needed > 0:
-            if category == 'puc_degree' and subject in PUC_EXAM_SUBJECTS:
-                cursor.execute('SELECT question FROM questions')
-            elif subject and subject != 'All':
-                cursor.execute('''
-                    SELECT question FROM questions
-                    WHERE NOT (category = ? AND subject = ?)
-                ''', (category, subject))
-            elif general_puc_test:
-                cursor.execute(
-                    'SELECT question FROM questions WHERE category != ? OR exam IS NOT NULL',
-                    (category,)
-                )
-            else:
-                cursor.execute(
-                    'SELECT question FROM questions WHERE category != ?',
-                    (category,)
-                )
+            cursor.execute('SELECT question FROM questions')
             other_category_questions = [
                 {'question': row['question']} for row in cursor.fetchall()
             ]
-            generation_pool = existing_questions + other_category_questions
+            generation_pool = other_category_questions
             generation_target = len(generation_pool) + questions_needed
-            additions = generate_additional_questions(
-                category,
-                generation_pool,
-                generation_target,
-                subject=subject,
-                required_subject_counts=required_subject_counts,
-                required_topic_counts=required_topic_counts,
-            )
+            try:
+                additions = generate_additional_questions(
+                    category,
+                    generation_pool,
+                    generation_target,
+                    subject=subject,
+                    required_subject_counts=required_subject_counts,
+                    required_topic_counts=required_topic_counts,
+                )
+            except Exception:
+                conn.rollback()
+                conn.close()
+                raise
             for question in additions:
                 cursor.execute('''
                     INSERT INTO questions (category, exam, subject, topic, question, option_a, option_b,
@@ -415,7 +497,6 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                 ''', (question['category'], question.get('exam'), question['subject'], question['topic'], question['question'],
                       question['option_a'], question['option_b'], question['option_c'], question['option_d'],
                       question['correct_answer'], question['explanation'], question['difficulty']))
-            conn.commit()
 
     if category == 'highschool':
         allowed_subjects = HIGH_SCHOOL_ALLOWED_SUBJECTS
@@ -434,6 +515,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                 correct_answer, explanation, difficulty
                 FROM questions
                 WHERE category = ? AND subject = ? AND is_active = 1
+                  AND id NOT IN (SELECT question_id FROM question_uses)
+                  AND lower(trim(question)) NOT IN (
+                      SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                  )
                 ORDER BY RANDOM()
                 LIMIT ?
             ''', (category, subject, count))
@@ -444,6 +529,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                 correct_answer, explanation, difficulty
                 FROM questions
                 WHERE category = ? AND subject IN ({placeholders}) AND is_active = 1
+                  AND id NOT IN (SELECT question_id FROM question_uses)
+                  AND lower(trim(question)) NOT IN (
+                      SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                  )
                 ORDER BY RANDOM()
             ''', (category, *subject_values))
             all_rows = [dict(row) for row in cursor.fetchall()]
@@ -460,6 +549,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                 correct_answer, explanation, difficulty
                 FROM questions
                 WHERE category = ? AND exam = ? AND is_active = 1
+                  AND id NOT IN (SELECT question_id FROM question_uses)
+                  AND lower(trim(question)) NOT IN (
+                      SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                  )
                 ORDER BY RANDOM()
             ''', (category, subject))
             buckets = {}
@@ -482,8 +575,8 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                     if len(selected) < 50:
                         conn.close()
                         raise RuntimeError(
-                            f'{subject} question bank has only {len(selected)} unique '
-                            f'{question_subject} questions; 50 are required.'
+                            f'{subject} has only {len(selected)} unused unique '
+                            f'{question_subject} questions remaining; 50 are required.'
                         )
                     questions.extend(selected)
             elif subject == 'DSA Aptitude':
@@ -501,8 +594,8 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                     if len(selected) < 5:
                         conn.close()
                         raise RuntimeError(
-                            f'DSA Aptitude question bank has only {len(selected)} unique '
-                            f'{topic} questions; 5 are required.'
+                            f'DSA Aptitude has only {len(selected)} unused unique '
+                            f'{topic} questions remaining; 5 are required.'
                         )
                     questions.extend(selected)
             else:
@@ -517,6 +610,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                 correct_answer, explanation, difficulty
                 FROM questions
                 WHERE category = ? AND subject = ? AND is_active = 1
+                  AND id NOT IN (SELECT question_id FROM question_uses)
+                  AND lower(trim(question)) NOT IN (
+                      SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                  )
                 ORDER BY RANDOM()
                 LIMIT ?
             ''', (category, subject, count))
@@ -525,12 +622,21 @@ def fetch_unique_test_questions(category, count=50, subject=None):
             if general_puc_test:
                 cursor.execute(
                     '''SELECT DISTINCT subject FROM questions
-                       WHERE category = ? AND exam IS NULL AND is_active = 1''',
+                       WHERE category = ? AND exam IS NULL AND is_active = 1
+                         AND id NOT IN (SELECT question_id FROM question_uses)
+                         AND lower(trim(question)) NOT IN (
+                             SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                         )''',
                     (category,)
                 )
             else:
                 cursor.execute(
-                    'SELECT DISTINCT subject FROM questions WHERE category = ? AND is_active = 1',
+                    '''SELECT DISTINCT subject FROM questions
+                       WHERE category = ? AND is_active = 1
+                         AND id NOT IN (SELECT question_id FROM question_uses)
+                         AND lower(trim(question)) NOT IN (
+                             SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                         )''',
                     (category,)
                 )
             subjects = [row['subject'] for row in cursor.fetchall()]
@@ -546,6 +652,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                correct_answer, explanation, difficulty
                         FROM questions
                         WHERE category = ? AND subject = ? AND is_active = 1
+                          AND id NOT IN (SELECT question_id FROM question_uses)
+                          AND lower(trim(question)) NOT IN (
+                              SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                          )
                         {'AND exam IS NULL' if general_puc_test else ''}
                         ORDER BY RANDOM()
                         LIMIT ?
@@ -564,6 +674,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                correct_answer, explanation, difficulty
                         FROM questions
                         WHERE category = ? AND id NOT IN ({placeholders}) AND is_active = 1
+                          AND id NOT IN (SELECT question_id FROM question_uses)
+                          AND lower(trim(question)) NOT IN (
+                              SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                          )
                         {'AND exam IS NULL' if general_puc_test else ''}
                         ORDER BY RANDOM()
                         LIMIT ?
@@ -577,6 +691,10 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                                correct_answer, explanation, difficulty
                         FROM questions
                         WHERE category = ? AND is_active = 1
+                          AND id NOT IN (SELECT question_id FROM question_uses)
+                          AND lower(trim(question)) NOT IN (
+                              SELECT question_text FROM question_uses WHERE question_text IS NOT NULL
+                          )
                         {'AND exam IS NULL' if general_puc_test else ''}
                         ORDER BY RANDOM()
                         LIMIT ?
@@ -590,8 +708,6 @@ def fetch_unique_test_questions(category, count=50, subject=None):
                         seen_ids.add(row['id'])
                         questions.append(dict(row))
 
-    conn.close()
-
     # Double-check uniqueness constraint
     unique_check = set()
     question_text_check = set()
@@ -603,6 +719,22 @@ def fetch_unique_test_questions(category, count=50, subject=None):
             question_text_check.add(question_text)
             sanitized_questions.append(q)
 
+    if len(sanitized_questions) != count:
+        conn.rollback()
+        conn.close()
+        raise RuntimeError(
+            f'Only {len(sanitized_questions)} unused unique questions are available; {count} are required.'
+        )
+
+    cursor.executemany(
+        'INSERT INTO question_uses (question_id, question_text) VALUES (?, ?)',
+        (
+            (question['id'], ' '.join(question['question'].split()).casefold())
+            for question in sanitized_questions
+        )
+    )
+    conn.commit()
+    conn.close()
     return sanitized_questions
 
 def record_test_result(student_id, category, test_title, answers_data, exam=None):
